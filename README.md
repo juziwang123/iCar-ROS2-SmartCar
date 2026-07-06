@@ -1,6 +1,6 @@
 # 基于 iCar 智能小车的 ROS2 多传感器巡检与自主导航系统
 
-> 北交大 2026 暑期实训 · 第 X 组
+> 北交大 2026 暑期实训项目组
 >
 > 项目周期：2026.07.06 – 2026.07.15
 
@@ -44,7 +44,7 @@
 
 ### 2.1 本地开发环境搭建（WSL Ubuntu 22.04 + ROS2 Humble）
 
-参考 `docs/第2章_ROS2安装与系统架构_笔记.md`，核心步骤如下：
+参考 ROS2 Humble 官方安装文档与课程资料，核心步骤如下：
 
 ```bash
 # 1. 设置 locale
@@ -74,7 +74,7 @@ echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
 
 # 5. 克隆本项目
 cd ~/ros2_ws/src
-git clone <本仓库地址> .
+git clone git@github.com:juziwang123/iCar-ROS2-SmartCar.git .
 cd ~/ros2_ws && colcon build
 ```
 
@@ -93,8 +93,8 @@ cd ~/ros2_ws && colcon build
 
 ```bash
 # 1. 小车连接热点 ohcar（密码: 88888888）
-# 2. 获取小车 IP 后 SSH 登录
-ssh jetson@<小车IP>
+# 2. 获取小车实际 IP 后 SSH 登录
+ssh jetson@<小车实际IP>
 # 密码: yahboom
 
 # 3. 小车上安装 NoMachine（ARM64 版）
@@ -106,7 +106,9 @@ sudo dpkg -i nomachine_*.deb
 
 ---
 
-## 三、项目目录结构
+## 三、项目规划目录结构
+
+以下目录树描述的是本项目的目标形态，用于指导后续功能包实现和文档组织；当前仓库仍处于脚手架与文档先行阶段，部分文件尚未创建。
 
 ```
 ros2_ws/
@@ -183,10 +185,14 @@ ros2_ws/
 │
 ├── docs/                             # 项目文档
 │   ├── 需求分析报告.md
+│   ├── 项目开发报告.md
 │   ├── 设计文档.md
 │   ├── 测试报告.md
 │   ├── 使用手册.md
-│   ├── 第2章_ROS2安装与系统架构_笔记.md  # ROS2 安装参考
+│   ├── 代码质量保证方案.md
+│   ├── 提交规范与交付清单.md
+│   ├── 项目分工与任务清单.md
+│   ├── 拓展功能实施方案.md
 │   └── 日报/                             # 每日开发记录
 │       ├── 7月6日_日报.md
 │       └── ...
@@ -287,14 +293,14 @@ git add -A && git commit -m "描述做了什么" && git push
 
 ```bash
 # 方式一：scp 传输源码
-scp -r ~/ros2_ws/src/car_xxx jetson@<小车IP>:~/ros2_ws/src/
+scp -r ~/ros2_ws/src/car_xxx jetson@<小车实际IP>:~/ros2_ws/src/
 
 # 方式二：小车 git pull
-ssh jetson@<小车IP>
+ssh jetson@<小车实际IP>
 cd ~/ros2_ws/src && git pull
 
 # 在小车上编译
-ssh jetson@<小车IP>
+ssh jetson@<小车实际IP>
 cd ~/ros2_ws && colcon build
 ```
 
@@ -381,11 +387,11 @@ ros2 launch yahboomcar_nav navigation_teb_launch.py   # TEB 局部规划
 ```
 main           ← 稳定版本（答辩用）
   └── develop  ← 开发分支，每日合并
-        ├── feature/car_control    ← 成员 A：底盘控制
-        ├── feature/car_lidar     ← 成员 B：雷达
-        ├── feature/car_vision    ← 成员 C：视觉
-        ├── feature/car_nav       ← 成员 D：导航
-        └── feature/car_app       ← 成员 E：APP
+        ├── feature/car_control    ← 控制负责人
+        ├── feature/car_lidar      ← 雷达负责人
+        ├── feature/car_vision     ← 视觉负责人
+        ├── feature/car_nav        ← 导航负责人
+        └── feature/car_app        ← APP 负责人
 ```
 
 ### 7.2 提交规范
