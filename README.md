@@ -384,15 +384,25 @@ ros2 launch yahboomcar_nav navigation_teb_launch.py   # TEB 局部规划
 
 ### 7.1 分支策略
 
+说明：本项目默认 5 名成员都参与编码开发，每个角色都应对应至少一条功能代码主线，而不是只承担文档或测试整理工作。
+
 ```
 main           ← 稳定版本（答辩用）
   └── develop  ← 开发分支，每日合并
-        ├── feature/car_control    ← 控制负责人
-        ├── feature/car_lidar      ← 雷达负责人
-        ├── feature/car_vision     ← 视觉负责人
-        ├── feature/car_nav        ← 导航负责人
-        └── feature/car_app        ← APP 负责人
+  ├── feature/car_bringup    ← 组长 / 集成与编排负责人
+  ├── feature/car_control    ← 控制与通信负责人
+  ├── feature/car_lidar_nav  ← 雷达与导航负责人
+  ├── feature/car_vision     ← 视觉与识别负责人
+  └── feature/car_app_tools  ← APP 与测试工具链负责人
 ```
+
+对应建议：
+
+1. `feature/car_bringup` 负责总启动入口、模式切换、LLM 任务编排等集成代码。
+2. `feature/car_control` 负责底盘控制、键盘遥操作和控制仲裁接口。
+3. `feature/car_lidar_nav` 负责雷达避障、建图、导航与多车协同预研。
+4. `feature/car_vision` 负责颜色识别、YOLO、循线和风险检测。
+5. `feature/car_app_tools` 负责 APP 桥接、状态回传、测试脚本和部署脚本。
 
 ### 7.2 提交规范
 
