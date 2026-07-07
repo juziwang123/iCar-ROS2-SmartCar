@@ -20,3 +20,6 @@ Thumbs.db
 
 # colcon
 COLCON_IGNORE
+
+# local runtime logs
+.run_logs/

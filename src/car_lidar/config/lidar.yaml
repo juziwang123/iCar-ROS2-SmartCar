@@ -1,0 +1,21 @@
+/**:
+  ros__parameters:
+    scan_topic: /scan
+    output_topic: /cmd_vel_lidar
+    override_topic: /lidar/override_active
+    follow_output_topic: /cmd_vel_follow
+    estop_topic: /emergency_stop
+    front_distance_threshold: 0.5
+    slow_distance_threshold: 0.9
+    linear_speed: 0.15
+    turn_speed: 0.6
+    front_angle_deg: 25.0
+    publish_estop: false
+    follow_angle_deg: 35.0
+    desired_distance: 0.8
+    distance_tolerance: 0.1
+    max_follow_distance: 2.0
+    linear_gain: 0.5
+    angular_gain: 1.2
+    max_linear_speed: 0.2
+    max_angular_speed: 0.8
