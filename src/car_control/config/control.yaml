@@ -9,3 +9,14 @@
     angular_speed: 0.8
     max_linear_speed: 0.4
     max_angular_speed: 1.2
+    # Light controller parameters
+    light_control_topic: /car/light_control
+    enable_gpio_control: false  # Set to true on real hardware
+    front_left_gpio: 17
+    front_right_gpio: 27
+    rear_left_gpio: 22
+    rear_right_gpio: 23
+    brake_gpio: 24
+    turn_threshold: 0.3
+    blink_slow_interval: 0.5
+    blink_fast_interval: 0.2

@@ -43,4 +43,11 @@ def generate_launch_description() -> LaunchDescription:
             condition=IfCondition(use_keyboard),
             output='screen',
         ),
+            Node(
+                package='car_control',
+                executable='light_controller',
+                name='light_controller',
+                parameters=[params_file],
+                output='screen',
+            ),
     ])

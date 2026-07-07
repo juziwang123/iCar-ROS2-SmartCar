@@ -26,6 +26,7 @@ setup(
             'keyboard_teleop = car_control.keyboard_teleop:main',
             'safety_mux = car_control.safety_mux:main',
             'motion_controller = car_control.motion_controller:main',
+            'light_controller = car_control.light_controller:main',
         ],
     },
 )
