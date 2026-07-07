@@ -32,6 +32,7 @@ class KeyboardTeleop(Node):
         self.timer = self.create_timer(0.05, self._poll_keyboard)
 
         self._settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
         self.get_logger().info(
             '键盘遥控已启动：w/s 前进后退，a/d 左右转，q/e 弧线，x 停止，空格急停，r 解除急停，m 手动模式。'
         )
@@ -100,10 +101,8 @@ class KeyboardTeleop(Node):
         self.publisher.publish(msg)
 
     def _read_key(self) -> Optional[str]:
-        tty.setraw(sys.stdin.fileno())
         ready, _, _ = select.select([sys.stdin], [], [], 0.0)
         key = sys.stdin.read(1) if ready else None
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._settings)
         return key
 
 
