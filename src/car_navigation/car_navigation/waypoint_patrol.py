@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 import rclpy
 import yaml
@@ -32,12 +32,13 @@ class WaypointPatrol(Node):
             str(self.get_parameter('action_name').value),
         )
 
-        self.waypoints: list[dict[str, float]] = []
+        self.waypoints: List[Dict[str, float]] = []
         self.current_index = 0
         if bool(self.get_parameter('autoload').value):
             self._load_waypoints()
             self.create_timer(0.5, self._start_if_ready)
         self._started = False
+        self._action_sent_for_current = False
 
     def _load_waypoints(self) -> None:
         waypoints_file = str(self.get_parameter('waypoints_file').value)
@@ -50,6 +51,8 @@ class WaypointPatrol(Node):
 
     def _start_if_ready(self) -> None:
         if self._started or not self.waypoints:
+            return
+        if not self.action_client.wait_for_server(timeout_sec=1.0):
             return
         self._started = True
         self._send_current_goal()
@@ -64,6 +67,10 @@ class WaypointPatrol(Node):
                 self.get_logger().info('Waypoint patrol finished')
                 return
 
+        if not self.action_client.wait_for_server(timeout_sec=2.0):
+            self.get_logger().warn('navigate_to_pose action server not available; will retry')
+            return
+
         waypoint = self.waypoints[self.current_index]
         pose = self._build_goal(
             float(waypoint.get('x', 0.0)),
@@ -71,14 +78,12 @@ class WaypointPatrol(Node):
             float(waypoint.get('yaw', 0.0)),
         )
         self.publisher.publish(pose)
-        if not self.action_client.wait_for_server(timeout_sec=2.0):
-            self.get_logger().warn('navigate_to_pose action server not available; published /goal_pose only')
-            return
 
         goal = NavigateToPose.Goal()
         goal.pose = pose
         future = self.action_client.send_goal_async(goal)
         future.add_done_callback(self._goal_response_callback)
+        self._action_sent_for_current = True
         self.get_logger().info(f'Sent waypoint {self.current_index + 1}/{len(self.waypoints)}')
 
     def _goal_response_callback(self, future) -> None:
@@ -89,9 +94,10 @@ class WaypointPatrol(Node):
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._result_callback)
 
-    def _result_callback(self, future) -> None:
+    def _result_callback(self, future: Any) -> None:
         _ = future.result()
         self.current_index += 1
+        self._action_sent_for_current = False
         self._send_current_goal()
 
     def _build_goal(self, x: float, y: float, yaw: float) -> PoseStamped:
@@ -105,7 +111,7 @@ class WaypointPatrol(Node):
         return pose
 
 
-def main(args: Sequence[str] | None = None) -> None:
+def main(args: Optional[Sequence[str]] = None) -> None:
     rclpy.init(args=args)
     node = WaypointPatrol()
     try:

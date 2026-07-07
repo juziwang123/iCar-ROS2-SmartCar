@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -13,8 +14,8 @@ from std_msgs.msg import String
 
 @dataclass
 class TimedTwist:
-    msg: Twist | None = None
-    stamp: Time | None = None
+    msg: Optional[Twist] = None
+    stamp: Optional[Time] = None
 
 
 class SafetyMux(Node):

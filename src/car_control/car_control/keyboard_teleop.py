@@ -108,6 +108,10 @@ class KeyboardTeleop(Node):
 
 def main(args=None) -> None:
     rclpy.init(args=args)
+    if not sys.stdin.isatty():
+        print('keyboard_teleop requires an interactive terminal (TTY).', file=sys.stderr)
+        rclpy.shutdown()
+        return
     node = KeyboardTeleop()
     try:
         rclpy.spin(node)

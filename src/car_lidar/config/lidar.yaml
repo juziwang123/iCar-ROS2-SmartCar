@@ -2,8 +2,8 @@
   ros__parameters:
     scan_topic: /scan
     output_topic: /cmd_vel_lidar
-    override_topic: /lidar/override_active
     follow_output_topic: /cmd_vel_follow
+    override_topic: /lidar/override_active
     estop_topic: /emergency_stop
     front_distance_threshold: 0.5
     slow_distance_threshold: 0.9

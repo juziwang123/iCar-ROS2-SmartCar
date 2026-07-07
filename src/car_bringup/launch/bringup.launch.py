@@ -14,6 +14,8 @@ def generate_launch_description() -> LaunchDescription:
     mapping_use_gzclient = LaunchConfiguration('mapping_use_gzclient')
     mapping_use_rviz = LaunchConfiguration('mapping_use_rviz')
     use_navigation = LaunchConfiguration('use_navigation')
+    navigation_use_gzclient = LaunchConfiguration('navigation_use_gzclient')
+    navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
     params_file = LaunchConfiguration('params_file')
     lidar_params_file = LaunchConfiguration('lidar_params_file')
@@ -30,6 +32,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('mapping_use_gzclient', default_value='false'),
         DeclareLaunchArgument('mapping_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_navigation', default_value='false'),
+        DeclareLaunchArgument('navigation_use_gzclient', default_value='true'),
+        DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
         DeclareLaunchArgument('navigation_goal_x', default_value='0.5'),
         DeclareLaunchArgument('navigation_goal_y', default_value='0.0'),
@@ -111,6 +115,8 @@ def generate_launch_description() -> LaunchDescription:
                 'x': navigation_goal_x,
                 'y': navigation_goal_y,
                 'yaw': navigation_goal_yaw,
+                'use_gzclient': navigation_use_gzclient,
+                'use_rviz': navigation_use_rviz,
             }.items(),
             condition=IfCondition(use_navigation),
         ),

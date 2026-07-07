@@ -1,4 +1,5 @@
 import math
+from typing import List, Optional, Tuple
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -63,13 +64,13 @@ class AvoidanceNode(Node):
         if override_active:
             self.cmd_publisher.publish(command)
         self.override_publisher.publish(Bool(data=override_active))
-        if self.publish_estop:
-            self.estop_publisher.publish(Bool(data=estop))
+        if self.publish_estop and estop:
+            self.estop_publisher.publish(Bool(data=True))
 
-    def _extract_distances(self, msg: LaserScan) -> tuple[float | None, float, float]:
-        front_samples: list[float] = []
-        left_samples: list[float] = []
-        right_samples: list[float] = []
+    def _extract_distances(self, msg: LaserScan) -> Tuple[Optional[float], float, float]:
+        front_samples: List[float] = []
+        left_samples: List[float] = []
+        right_samples: List[float] = []
         half_window = math.radians(self.front_angle_deg)
 
         angle = msg.angle_min
