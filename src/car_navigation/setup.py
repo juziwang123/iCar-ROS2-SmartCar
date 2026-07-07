@@ -16,7 +16,15 @@ setup(
             'launch/navigation.launch.py',
             'launch/patrol.launch.py',
         ]),
-        (f'share/{package_name}/config', ['config/waypoints.yaml']),
+        (f'share/{package_name}/config', [
+            'config/waypoints.yaml',
+            'config/nav2_params.yaml',
+        ]),
+        (f'share/{package_name}/maps', [
+            'maps/lab_map.yaml',
+            'maps/lab_map.pgm',
+            'maps/lab_map.png',
+        ]),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

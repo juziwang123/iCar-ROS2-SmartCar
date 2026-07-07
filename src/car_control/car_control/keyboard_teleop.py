@@ -32,7 +32,7 @@ class KeyboardTeleop(Node):
 
         self._settings = termios.tcgetattr(sys.stdin)
         self.get_logger().info(
-            'Keyboard teleop started: w/s forward back, a/d turn, x stop, m manual, n nav, v vision, f follow, space estop.'
+            '键盘遥控已启动：w/s 前进后退，a/d 左右转，q/e 弧线，x 停止，空格急停，r 解除急停，m 手动模式。'
         )
 
     def destroy_node(self) -> bool:
@@ -90,7 +90,7 @@ class KeyboardTeleop(Node):
 
     def _publish_mode(self, mode: str) -> None:
         self.mode_publisher.publish(String(data=mode))
-        self.get_logger().info(f'Switched mode to {mode}')
+        self.get_logger().info(f'已切换模式：{mode}')
 
     def _publish_twist(self, linear: float, angular: float) -> None:
         msg = Twist()
@@ -109,7 +109,7 @@ class KeyboardTeleop(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     if not sys.stdin.isatty():
-        print('keyboard_teleop requires an interactive terminal (TTY).', file=sys.stderr)
+        print('keyboard_teleop 需要在交互式终端中运行。', file=sys.stderr)
         rclpy.shutdown()
         return
     node = KeyboardTeleop()

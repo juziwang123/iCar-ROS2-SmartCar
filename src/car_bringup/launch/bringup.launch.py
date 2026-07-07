@@ -11,14 +11,15 @@ def generate_launch_description() -> LaunchDescription:
     use_lidar_avoidance = LaunchConfiguration('use_lidar_avoidance')
     use_lidar_tracker = LaunchConfiguration('use_lidar_tracker')
     use_mapping = LaunchConfiguration('use_mapping')
-    mapping_use_gzclient = LaunchConfiguration('mapping_use_gzclient')
     mapping_use_rviz = LaunchConfiguration('mapping_use_rviz')
     use_navigation = LaunchConfiguration('use_navigation')
-    navigation_use_gzclient = LaunchConfiguration('navigation_use_gzclient')
     navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
     params_file = LaunchConfiguration('params_file')
     lidar_params_file = LaunchConfiguration('lidar_params_file')
+    map_file = LaunchConfiguration('map')
+    nav_params_file = LaunchConfiguration('nav_params_file')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     navigation_goal_x = LaunchConfiguration('navigation_goal_x')
     navigation_goal_y = LaunchConfiguration('navigation_goal_y')
     navigation_goal_yaw = LaunchConfiguration('navigation_goal_yaw')
@@ -29,12 +30,11 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_lidar_avoidance', default_value='false'),
         DeclareLaunchArgument('use_lidar_tracker', default_value='false'),
         DeclareLaunchArgument('use_mapping', default_value='false'),
-        DeclareLaunchArgument('mapping_use_gzclient', default_value='false'),
         DeclareLaunchArgument('mapping_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_navigation', default_value='false'),
-        DeclareLaunchArgument('navigation_use_gzclient', default_value='true'),
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('navigation_goal_x', default_value='0.5'),
         DeclareLaunchArgument('navigation_goal_y', default_value='0.0'),
         DeclareLaunchArgument('navigation_goal_yaw', default_value='0.0'),
@@ -60,6 +60,22 @@ def generate_launch_description() -> LaunchDescription:
                 FindPackageShare('car_bringup'),
                 'config',
                 'lidar.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument(
+            'map',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('car_navigation'),
+                'maps',
+                'lab_map.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument(
+            'nav_params_file',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('car_navigation'),
+                'config',
+                'nav2_params.yaml',
             ]),
         ),
         IncludeLaunchDescription(
@@ -98,8 +114,8 @@ def generate_launch_description() -> LaunchDescription:
                 ])
             ),
             launch_arguments={
-                'use_gzclient': mapping_use_gzclient,
                 'use_rviz': mapping_use_rviz,
+                'use_sim_time': use_sim_time,
             }.items(),
             condition=IfCondition(use_mapping),
         ),
@@ -115,8 +131,10 @@ def generate_launch_description() -> LaunchDescription:
                 'x': navigation_goal_x,
                 'y': navigation_goal_y,
                 'yaw': navigation_goal_yaw,
-                'use_gzclient': navigation_use_gzclient,
+                'map': map_file,
+                'params_file': nav_params_file,
                 'use_rviz': navigation_use_rviz,
+                'use_sim_time': use_sim_time,
             }.items(),
             condition=IfCondition(use_navigation),
         ),
@@ -130,6 +148,10 @@ def generate_launch_description() -> LaunchDescription:
             ),
             launch_arguments={
                 'waypoints_file': waypoints_file,
+                'map': map_file,
+                'params_file': nav_params_file,
+                'use_rviz': navigation_use_rviz,
+                'use_sim_time': use_sim_time,
             }.items(),
             condition=IfCondition(use_patrol),
         ),

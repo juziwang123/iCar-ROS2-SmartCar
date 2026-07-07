@@ -33,10 +33,10 @@
 
 | 环境 | 系统 | ROS2 版本 | 用途 |
 |------|------|-----------|------|
-| 本地开发 | Windows 11 + WSL2 Ubuntu 22.04 | Humble | 代码编写、仿真测试 |
-| 实车运行 | Jetson Ubuntu 20.04 + Docker | Foxy（小车预置） | 实车部署与运行 |
+| 本地开发 | Windows 11 + WSL2 Ubuntu 22.04 | Humble | 代码编写、静态检查 |
+| 实车运行 | Jetson Ubuntu 20.04 | Foxy（小车预置） | 实车部署与运行 |
 
-> **重要**：Foxy 和 Humble 不要混在同一个工作空间。实车以小车预置 Docker/Foxy 环境为准；本地学习和仿真以 Humble 为准。本仓库代码在 Humble 下开发，部署到小车时需适配。
+> **重要**：Foxy 和 Humble 不要混在同一个工作空间。实车以小车 Jetson 上的预置 Foxy 环境为准，本仓库当前启动文件面向实车运行，不再默认依赖 Gazebo / wpr_simulation2 仿真环境。
 
 ---
 
@@ -78,15 +78,17 @@ git clone git@github.com:juziwang123/iCar-ROS2-SmartCar.git .
 cd ~/ros2_ws && colcon build
 ```
 
-### 2.2 仿真环境安装
+### 2.2 小车端依赖安装
 
 ```bash
-cd ~/ros2_ws/src
-git clone https://github.com/6-robot/wpr_simulation2.git
-# 国内镜像: git clone https://gitee.com/s-robot/wpr_simulation2.git
-cd wpr_simulation2/scripts/
-./install_for_humble.sh
+sudo apt update
+sudo apt install -y \
+  ros-foxy-nav2-bringup \
+  ros-foxy-slam-toolbox \
+  python3-yaml
+
 cd ~/ros2_ws && colcon build
+source install/setup.bash
 ```
 
 ### 2.3 小车连接
@@ -165,12 +167,12 @@ ros2_ws/
 │   │   │   ├── __init__.py
 │   │   │   ├── waypoint_patrol.py        # 多点巡航节点
 │   │   │   └── goal_publisher.py         # 发布导航目标点
-│   │   ├── maps/                         # 保存的地图文件
+│   │   ├── maps/                         # SLAM 保存的地图文件，Nav2 导航时加载
 │   │   │   ├── lab_map.pgm
 │   │   │   └── lab_map.yaml
 │   │   ├── config/
 │   │   │   ├── nav2_params.yaml
-│   │   │   └── dwa_params.yaml
+│   │   │   └── waypoints.yaml
 │   │   ├── setup.py
 │   │   └── package.xml
 │   │
@@ -348,34 +350,50 @@ ros2 run yahboomcar_ctrl yahboom_keyboard
 
 ### 6.2 SLAM 建图流程
 
+一键启动实车建图与键盘遥控：
+
 ```bash
-# 1. 启动建图
-ros2 launch yahboomcar_nav map_gmapping_launch.py
-
-# 2. 显示地图（RViz）
-ros2 launch yahboomcar_nav display_map_launch.py
-
-# 3. 键盘遥控小车扫描场地
-ros2 run yahboomcar_ctrl yahboom_keyboard
-
-# 4. 保存地图
-ros2 launch yahboomcar_nav save_map_launch.py
+cd ~/ros2_ws
+source /opt/ros/foxy/setup.bash
+source install/setup.bash
+chmod +x scripts/start_real_mapping_keyboard.sh
+bash scripts/start_real_mapping_keyboard.sh
 ```
+
+脚本会自动启动底盘驱动、雷达、建图节点和控制链路，最后进入键盘遥控。结束后按 `Ctrl+C`，再按脚本提示执行 `map_saver_cli` 保存地图。
+
+```bash
+# 1. 先启动厂家底盘、雷达和里程计相关节点
+ros2 run icar_bringup Mcnamu_driver_X3
+ros2 launch sllidar_ros2 sllidar_launch.py
+
+# 2. 启动本项目建图节点
+ros2 launch car_navigation mapping.launch.py
+
+# 3. 遥控小车缓慢扫描场地
+ros2 run car_control keyboard_teleop
+
+# 4. 保存地图到 car_navigation/maps 或指定目录
+ros2 run nav2_map_server map_saver_cli -f ~/ros2_ws/src/iCar-ROS2-SmartCar/src/car_navigation/maps/lab_map
+```
+
+`maps` 目录用于保存 SLAM 输出的地图资源。`lab_map.yaml` 记录分辨率、原点、阈值和图像文件名，`lab_map.pgm` 是占据栅格图像；导航时 Nav2 读取 YAML，再按 YAML 中的 `image` 字段加载对应 PGM。
 
 ### 6.3 自主导航流程
 
 ```bash
-# 1. 启动导航基础节点
-ros2 launch yahboomcar_nav laser_bringup_launch.py
+# 1. 先启动厂家底盘、雷达和里程计相关节点
+ros2 run icar_bringup Mcnamu_driver_X3
+ros2 launch sllidar_ros2 sllidar_launch.py
 
-# 2. 启动导航显示
-ros2 launch yahboomcar_nav display_nav_launch.py
+# 2. 启动本项目 Nav2 导航，默认加载 car_navigation/maps/lab_map.yaml
+ros2 launch car_navigation navigation.launch.py
 
-# 3. 启动路径规划（二选一）
-ros2 launch yahboomcar_nav navigation_dwa_launch.py   # DWA 局部规划
-ros2 launch yahboomcar_nav navigation_teb_launch.py   # TEB 局部规划
+# 3. 使用新地图时覆盖 map 参数
+ros2 launch car_navigation navigation.launch.py map:=/absolute/path/to/map.yaml
 
-# 4. 在 RViz 中设置初始位姿 + 目标点
+# 4. 多点巡航
+ros2 launch car_navigation patrol.launch.py map:=/absolute/path/to/map.yaml
 ```
 
 ---
@@ -450,5 +468,4 @@ test(car_vision): 添加颜色检测单元测试
 | ROS2 安装与架构笔记 | `docs/第2章_ROS2安装与系统架构_笔记.md` |
 | 智能小车使用手册 | 随车附带 PDF |
 | ROS2 Humble 官方文档 | https://docs.ros.org/en/humble/ |
-| wpr_simulation2 仿真 | https://github.com/6-robot/wpr_simulation2 |
 | NoMachine 下载 | https://www.nomachine.com/download |
