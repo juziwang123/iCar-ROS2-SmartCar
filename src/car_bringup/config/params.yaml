@@ -4,6 +4,9 @@
     manual_timeout_sec: 0.6
     auto_timeout_sec: 0.6
     publish_rate_hz: 20.0
+    repeat_rate_hz: 20.0
+    direct_cmd_vel: false
+    idle_stop_cycles: 4
     follow_topic: /cmd_vel_follow
     linear_speed: 0.25
     angular_speed: 0.8

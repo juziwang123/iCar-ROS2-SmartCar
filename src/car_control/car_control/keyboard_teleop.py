@@ -11,112 +11,156 @@ from std_msgs.msg import Bool
 from std_msgs.msg import String
 
 
+HELP_TEXT = """
+iCar keyboard teleop
+--------------------
+w / s  : forward / backward
+a / d  : turn left / turn right
+q / e  : forward arc left / forward arc right
+x      : stop
+space  : emergency stop
+r      : release emergency stop
+m      : manual mode
+Ctrl-C : quit
+"""
+
+
 class KeyboardTeleop(Node):
     def __init__(self) -> None:
         super().__init__('keyboard_teleop')
         self.declare_parameter('linear_speed', 0.25)
         self.declare_parameter('angular_speed', 0.8)
         self.declare_parameter('publish_topic', '/cmd_vel_manual')
+        self.declare_parameter('direct_cmd_vel', False)
         self.declare_parameter('mode_topic', '/mode_select')
         self.declare_parameter('estop_topic', '/emergency_stop')
+        self.declare_parameter('idle_stop_cycles', 4)
 
-        publish_topic = self.get_parameter('publish_topic').value
-        mode_topic = self.get_parameter('mode_topic').value
-        estop_topic = self.get_parameter('estop_topic').value
+        publish_topic = str(self.get_parameter('publish_topic').value)
+        if bool(self.get_parameter('direct_cmd_vel').value):
+            publish_topic = '/cmd_vel'
 
         self.linear_speed = float(self.get_parameter('linear_speed').value)
         self.angular_speed = float(self.get_parameter('angular_speed').value)
-        self.publisher = self.create_publisher(Twist, publish_topic, 10)
-        self.mode_publisher = self.create_publisher(String, mode_topic, 10)
-        self.estop_publisher = self.create_publisher(Bool, estop_topic, 10)
-        self.timer = self.create_timer(0.05, self._poll_keyboard)
+        self.idle_stop_cycles = int(self.get_parameter('idle_stop_cycles').value)
 
-        self._settings = termios.tcgetattr(sys.stdin)
-        tty.setcbreak(sys.stdin.fileno())
-        self.get_logger().info(
-            '键盘遥控已启动：w/s 前进后退，a/d 左右转，q/e 弧线，x 停止，空格急停，r 解除急停，m 手动模式。'
+        self.publisher = self.create_publisher(Twist, publish_topic, 10)
+        self.mode_publisher = self.create_publisher(
+            String,
+            str(self.get_parameter('mode_topic').value),
+            10,
+        )
+        self.estop_publisher = self.create_publisher(
+            Bool,
+            str(self.get_parameter('estop_topic').value),
+            10,
         )
 
-    def destroy_node(self) -> bool:
-        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self._settings)
-        return super().destroy_node()
+        self.settings = termios.tcgetattr(sys.stdin)
+        self.get_logger().info(f'Keyboard teleop publishing to {publish_topic}')
 
-    def _poll_keyboard(self) -> None:
-        key = self._read_key()
-        if key is None:
-            return
+    def restore_terminal(self) -> None:
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.settings)
 
-        if key == 'm':
-            self._publish_mode('manual')
-            return
-        if key == 'n':
-            self._publish_mode('nav')
-            return
-        if key == 'v':
-            self._publish_mode('vision')
-            return
-        if key == 'f':
-            self._publish_mode('follow')
-            return
-        if key == ' ':
-            self.estop_publisher.publish(Bool(data=True))
-            self._publish_twist(0.0, 0.0)
-            return
-        if key == 'r':
-            self.estop_publisher.publish(Bool(data=False))
-            return
+    def get_key(self) -> str:
+        tty.setraw(sys.stdin.fileno())
+        ready, _, _ = select.select([sys.stdin], [], [], 0.1)
+        key = sys.stdin.read(1) if ready else ''
+        self.restore_terminal()
+        return key
 
-        linear = 0.0
-        angular = 0.0
-        if key == 'w':
-            linear = self.linear_speed
-        elif key == 's':
-            linear = -self.linear_speed
-        elif key == 'a':
-            angular = self.angular_speed
-        elif key == 'd':
-            angular = -self.angular_speed
-        elif key == 'q':
-            linear = self.linear_speed
-            angular = self.angular_speed
-        elif key == 'e':
-            linear = self.linear_speed
-            angular = -self.angular_speed
-        elif key == 'x':
-            linear = 0.0
-            angular = 0.0
-        else:
-            return
-
-        self._publish_twist(linear, angular)
-
-    def _publish_mode(self, mode: str) -> None:
+    def publish_mode(self, mode: str) -> None:
         self.mode_publisher.publish(String(data=mode))
-        self.get_logger().info(f'已切换模式：{mode}')
+        self.get_logger().info(f'Mode switched to {mode}')
 
-    def _publish_twist(self, linear: float, angular: float) -> None:
+    def publish_twist(self, linear: float, angular: float) -> None:
         msg = Twist()
         msg.linear.x = linear
         msg.angular.z = angular
         self.publisher.publish(msg)
 
-    def _read_key(self) -> Optional[str]:
-        ready, _, _ = select.select([sys.stdin], [], [], 0.0)
-        key = sys.stdin.read(1) if ready else None
-        return key
+    def stop(self) -> None:
+        self.publish_twist(0.0, 0.0)
 
 
 def main(args=None) -> None:
     rclpy.init(args=args)
     if not sys.stdin.isatty():
-        print('keyboard_teleop 需要在交互式终端中运行。', file=sys.stderr)
+        print('keyboard_teleop requires an interactive terminal.', file=sys.stderr)
         rclpy.shutdown()
         return
+
     node = KeyboardTeleop()
+    linear = 0.0
+    angular = 0.0
+    idle_count = 0
+
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+        print(HELP_TEXT)
+        node.publish_mode('manual')
+
+        while rclpy.ok():
+            key = node.get_key()
+
+            if key == '\x03':
+                break
+            if key == 'm':
+                node.publish_mode('manual')
+                idle_count = 0
+                continue
+            if key == ' ':
+                linear = 0.0
+                angular = 0.0
+                node.estop_publisher.publish(Bool(data=True))
+                node.stop()
+                idle_count = 0
+                continue
+            if key == 'r':
+                node.estop_publisher.publish(Bool(data=False))
+                node.publish_mode('manual')
+                idle_count = 0
+                continue
+
+            if key == 'w':
+                linear = node.linear_speed
+                angular = 0.0
+                idle_count = 0
+            elif key == 's':
+                linear = -node.linear_speed
+                angular = 0.0
+                idle_count = 0
+            elif key == 'a':
+                linear = 0.0
+                angular = node.angular_speed
+                idle_count = 0
+            elif key == 'd':
+                linear = 0.0
+                angular = -node.angular_speed
+                idle_count = 0
+            elif key == 'q':
+                linear = node.linear_speed
+                angular = node.angular_speed
+                idle_count = 0
+            elif key == 'e':
+                linear = node.linear_speed
+                angular = -node.angular_speed
+                idle_count = 0
+            elif key == 'x':
+                linear = 0.0
+                angular = 0.0
+                idle_count = 0
+            else:
+                idle_count += 1
+                if idle_count > node.idle_stop_cycles:
+                    linear = 0.0
+                    angular = 0.0
+
+            node.publish_twist(linear, angular)
+            rclpy.spin_once(node, timeout_sec=0.0)
+    except Exception as exc:
+        print(exc)
     finally:
+        node.stop()
+        node.restore_terminal()
         node.destroy_node()
         rclpy.shutdown()
