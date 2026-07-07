@@ -95,10 +95,14 @@ source_ros_environment() {
     exit 1
   fi
 
+  # ROS2 Foxy 的 setup.bash 会读取少量未预先定义的环境变量。
+  # 这里临时关闭 nounset，避免 set -u 把正常的 setup 流程误判为错误。
+  set +u
   # shellcheck source=/dev/null
   source "${ros_setup}"
   # shellcheck source=/dev/null
   source "${workspace_setup}"
+  set -u
 }
 
 start_background_command() {
