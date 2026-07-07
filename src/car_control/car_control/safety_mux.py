@@ -111,7 +111,7 @@ class SafetyMux(Node):
 
         self.publisher.publish(msg)
 
-    def _select_by_mode(self) -> Twist | None:
+    def _select_by_mode(self) -> Optional[Twist]:
         if self.mode == 'nav':
             return self._fresh_message(self.nav, self.auto_timeout)
         if self.mode == 'vision':
@@ -120,7 +120,7 @@ class SafetyMux(Node):
             return self._fresh_message(self.follow, self.auto_timeout)
         return self._fresh_message(self.manual, self.manual_timeout)
 
-    def _fresh_message(self, timed_twist: TimedTwist, timeout: Duration) -> Twist | None:
+    def _fresh_message(self, timed_twist: TimedTwist, timeout: Duration) -> Optional[Twist]:
         if timed_twist.msg is None or timed_twist.stamp is None:
             return None
         if self.get_clock().now() - timed_twist.stamp > timeout:

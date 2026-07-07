@@ -2,6 +2,7 @@ import select
 import sys
 import termios
 import tty
+from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -98,7 +99,7 @@ class KeyboardTeleop(Node):
         msg.angular.z = angular
         self.publisher.publish(msg)
 
-    def _read_key(self) -> str | None:
+    def _read_key(self) -> Optional[str]:
         tty.setraw(sys.stdin.fileno())
         ready, _, _ = select.select([sys.stdin], [], [], 0.0)
         key = sys.stdin.read(1) if ready else None

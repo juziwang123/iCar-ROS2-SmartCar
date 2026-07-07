@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Sequence
+from typing import Optional, Sequence
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -76,7 +76,7 @@ class GoalPublisher(Node):
         return goal
 
 
-def main(args: Sequence[str] | None = None) -> None:
+def main(args: Optional[Sequence[str]] = None) -> None:
     rclpy.init(args=args)
     node = GoalPublisher()
     try:

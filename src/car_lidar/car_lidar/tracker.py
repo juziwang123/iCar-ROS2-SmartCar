@@ -1,4 +1,5 @@
 import math
+from typing import List, Optional, Tuple
 
 import rclpy
 from geometry_msgs.msg import Twist
@@ -53,8 +54,8 @@ class TrackerNode(Node):
         command.angular.z = self._clamp(target_angle * self.angular_gain, self.max_angular_speed)
         self.publisher.publish(command)
 
-    def _find_target(self, msg: LaserScan) -> tuple[float, float] | None:
-        candidates: list[tuple[float, float]] = []
+    def _find_target(self, msg: LaserScan) -> Optional[Tuple[float, float]]:
+        candidates: List[Tuple[float, float]] = []
         half_window = math.radians(self.follow_angle_deg)
         angle = msg.angle_min
         for distance in msg.ranges:
