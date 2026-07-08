@@ -360,7 +360,7 @@ chmod +x scripts/start_real_mapping_keyboard.sh
 bash scripts/start_real_mapping_keyboard.sh
 ```
 
-脚本会自动启动底盘驱动、雷达、建图节点和控制链路，最后进入键盘遥控。结束后按 `Ctrl+C`，再按脚本提示执行 `map_saver_cli` 保存地图。
+脚本会自动启动底盘驱动、雷达、建图节点和控制链路，最后进入键盘遥控。结束后按 `Ctrl+C`，再按脚本提示输入 `y/n` 决定是否保存地图。
 
 ```bash
 # 1. 先启动厂家底盘、雷达和里程计相关节点

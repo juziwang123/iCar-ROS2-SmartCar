@@ -204,6 +204,35 @@ publish_stop() {
   ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
 }
 
+prompt_save_map() {
+  local answer
+
+  while true; do
+    read -r -p "是否现在保存地图？请输入 y/n: " answer || answer="n"
+    case "${answer}" in
+      [yY]|[yY][eE][sS])
+        return 0
+        ;;
+      [nN]|[nN][oO])
+        return 1
+        ;;
+      *)
+        echo "请输入 y 或 n。"
+        ;;
+    esac
+  done
+}
+
+save_map() {
+  echo
+  echo "正在保存地图..."
+  if ros2 run nav2_map_server map_saver_cli -f "${MAP_SAVE_PREFIX}"; then
+    echo "地图保存完成。"
+  else
+    echo "地图保存失败，请检查 nav2_map_server 是否可用。" >&2
+  fi
+}
+
 stop_background_nodes() {
   for pid in "${PIDS[@]}"; do
     if kill -0 "${pid}" >/dev/null 2>&1; then
@@ -219,17 +248,20 @@ cleanup() {
   trap - EXIT INT TERM
 
   echo
+  echo "建图流程已结束。"
+  if prompt_save_map; then
+    save_map
+  else
+    echo "已跳过地图保存。"
+  fi
+
+  echo
   echo "正在停止小车运动和后台节点..."
   publish_stop
   stop_background_nodes
 
   echo
-  echo "建图流程已结束。"
-  echo
-  echo "如果地图效果满意，请执行下面的命令保存地图："
-  echo "  ros2 run nav2_map_server map_saver_cli -f ${MAP_SAVE_PREFIX}"
-  echo
-  echo "地图会保存为："
+  echo "地图保存路径："
   echo "  ${MAP_SAVE_PREFIX}.yaml"
   echo "  ${MAP_SAVE_PREFIX}.pgm"
   echo
