@@ -25,7 +25,13 @@ ROS_DISTRO_NAME="${ROS_DISTRO:-foxy}"
 LOG_DIR="${ROOT_DIR}/.run_logs"
 MAP_SAVE_PREFIX="${MAP_SAVE_PREFIX:-${ROOT_DIR}/src/car_navigation/maps/lab_map}"
 
-# 如果厂家底盘/雷达驱动已经由其他终端启动，可以设为 0 跳过。
+# 默认使用厂家完整 bringup。它会启动底盘、里程计/EKF、雷达和必要 TF。
+START_VENDOR_BRINGUP="${START_VENDOR_BRINGUP:-1}"
+ROBOT_TYPE="${ROBOT_TYPE:-x3}"
+RPLIDAR_TYPE="${RPLIDAR_TYPE:-a1}"
+VENDOR_BRINGUP_CMD="${VENDOR_BRINGUP_CMD:-ros2 launch icar_nav laser_bringup_launch.py robot_type:=${ROBOT_TYPE} rplidar_type:=${RPLIDAR_TYPE}}"
+
+# 如果不使用厂家完整 bringup，可以分开启动底盘/雷达。
 START_BASE_DRIVER="${START_BASE_DRIVER:-1}"
 START_LIDAR="${START_LIDAR:-1}"
 
@@ -34,6 +40,15 @@ USE_RVIZ="${USE_RVIZ:-false}"
 
 # 是否启用本项目雷达避障输出。首次建图建议 false，避免影响手动扫图。
 USE_LIDAR_AVOIDANCE="${USE_LIDAR_AVOIDANCE:-false}"
+
+# 建图输入。A1 雷达通常直接使用 /scan；S2/4ROS 点数较多时可启用降采样。
+MAPPING_SCAN_TOPIC="${MAPPING_SCAN_TOPIC:-/scan}"
+MAPPING_USE_SCAN_FILTER="${MAPPING_USE_SCAN_FILTER:-false}"
+MAPPING_SCAN_FILTER_MULTIPLE="${MAPPING_SCAN_FILTER_MULTIPLE:-2}"
+
+# 如果不用厂家完整 bringup，可打开这两个静态 TF 兜底。
+MAPPING_PUBLISH_LASER_TF="${MAPPING_PUBLISH_LASER_TF:-false}"
+MAPPING_PUBLISH_BASE_LINK_TF="${MAPPING_PUBLISH_BASE_LINK_TF:-false}"
 
 # 厂家节点命令。如你的车上包名不同，可通过环境变量覆盖。
 BASE_DRIVER_CMD="${BASE_DRIVER_CMD:-ros2 run icar_bringup Mcnamu_driver_X3}"
@@ -59,10 +74,15 @@ print_config() {
   echo "  工作空间        : ${ROOT_DIR}"
   echo "  日志目录        : ${LOG_DIR}"
   echo "  地图保存前缀    : ${MAP_SAVE_PREFIX}"
+  echo "  厂家完整启动    : ${START_VENDOR_BRINGUP}"
+  echo "  车型/雷达       : ${ROBOT_TYPE} / ${RPLIDAR_TYPE}"
   echo "  启动底盘驱动    : ${START_BASE_DRIVER}"
   echo "  启动雷达驱动    : ${START_LIDAR}"
   echo "  启动 RViz       : ${USE_RVIZ}"
   echo "  启用雷达避障    : ${USE_LIDAR_AVOIDANCE}"
+  echo "  建图 scan       : ${MAPPING_SCAN_TOPIC}"
+  echo "  scan 降采样     : ${MAPPING_USE_SCAN_FILTER}"
+  echo "  发布 laser TF   : ${MAPPING_PUBLISH_LASER_TF}"
   echo
 }
 
@@ -238,20 +258,26 @@ main() {
   print_config
   print_keys
 
-  if [[ "${START_BASE_DRIVER}" == "1" ]]; then
-    start_background_command "厂家底盘驱动" "${LOG_DIR}/base_driver.log" "${BASE_DRIVER_CMD}"
-    sleep 2
+  if [[ "${START_VENDOR_BRINGUP}" == "1" ]]; then
+    start_background_command "厂家完整底盘/雷达/TF 启动" "${LOG_DIR}/vendor_bringup.log" "${VENDOR_BRINGUP_CMD}"
+    wait_for_topic /scan 25 "${LOG_DIR}/vendor_bringup.log" || true
+    wait_for_topic /odom 25 "${LOG_DIR}/vendor_bringup.log" || true
   else
-    echo "跳过厂家底盘驱动：START_BASE_DRIVER=0"
-    echo
-  fi
+    if [[ "${START_BASE_DRIVER}" == "1" ]]; then
+      start_background_command "厂家底盘驱动" "${LOG_DIR}/base_driver.log" "${BASE_DRIVER_CMD}"
+      sleep 2
+    else
+      echo "跳过厂家底盘驱动：START_BASE_DRIVER=0"
+      echo
+    fi
 
-  if [[ "${START_LIDAR}" == "1" ]]; then
-    start_background_command "激光雷达驱动" "${LOG_DIR}/lidar.log" "${LIDAR_CMD}"
-    wait_for_topic /scan 20 "${LOG_DIR}/lidar.log" || true
-  else
-    echo "跳过激光雷达驱动：START_LIDAR=0"
-    echo
+    if [[ "${START_LIDAR}" == "1" ]]; then
+      start_background_command "激光雷达驱动" "${LOG_DIR}/lidar.log" "${LIDAR_CMD}"
+      wait_for_topic /scan 20 "${LOG_DIR}/lidar.log" || true
+    else
+      echo "跳过激光雷达驱动：START_LIDAR=0"
+      echo
+    fi
   fi
 
   start_background_args \
@@ -261,6 +287,12 @@ main() {
       use_keyboard:=false \
       use_mapping:=true \
       mapping_use_rviz:="${USE_RVIZ}" \
+      mapping_scan_topic:="${MAPPING_SCAN_TOPIC}" \
+      mapping_use_scan_filter:="${MAPPING_USE_SCAN_FILTER}" \
+      mapping_scan_filter_multiple:="${MAPPING_SCAN_FILTER_MULTIPLE}" \
+      mapping_publish_laser_tf:="${MAPPING_PUBLISH_LASER_TF}" \
+      mapping_publish_base_link_tf:="${MAPPING_PUBLISH_BASE_LINK_TF}" \
+      use_sim_time:=false \
       use_lidar_avoidance:="${USE_LIDAR_AVOIDANCE}" \
       use_lidar_tracker:=false \
       use_navigation:=false \

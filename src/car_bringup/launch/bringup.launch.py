@@ -12,6 +12,11 @@ def generate_launch_description() -> LaunchDescription:
     use_lidar_tracker = LaunchConfiguration('use_lidar_tracker')
     use_mapping = LaunchConfiguration('use_mapping')
     mapping_use_rviz = LaunchConfiguration('mapping_use_rviz')
+    mapping_scan_topic = LaunchConfiguration('mapping_scan_topic')
+    mapping_use_scan_filter = LaunchConfiguration('mapping_use_scan_filter')
+    mapping_scan_filter_multiple = LaunchConfiguration('mapping_scan_filter_multiple')
+    mapping_publish_laser_tf = LaunchConfiguration('mapping_publish_laser_tf')
+    mapping_publish_base_link_tf = LaunchConfiguration('mapping_publish_base_link_tf')
     use_navigation = LaunchConfiguration('use_navigation')
     navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
@@ -31,6 +36,11 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_lidar_tracker', default_value='false'),
         DeclareLaunchArgument('use_mapping', default_value='false'),
         DeclareLaunchArgument('mapping_use_rviz', default_value='false'),
+        DeclareLaunchArgument('mapping_scan_topic', default_value='/scan'),
+        DeclareLaunchArgument('mapping_use_scan_filter', default_value='false'),
+        DeclareLaunchArgument('mapping_scan_filter_multiple', default_value='2'),
+        DeclareLaunchArgument('mapping_publish_laser_tf', default_value='false'),
+        DeclareLaunchArgument('mapping_publish_base_link_tf', default_value='false'),
         DeclareLaunchArgument('use_navigation', default_value='false'),
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
@@ -116,6 +126,11 @@ def generate_launch_description() -> LaunchDescription:
             launch_arguments={
                 'use_rviz': mapping_use_rviz,
                 'use_sim_time': use_sim_time,
+                'scan_topic': mapping_scan_topic,
+                'use_scan_filter': mapping_use_scan_filter,
+                'scan_filter_multiple': mapping_scan_filter_multiple,
+                'publish_laser_tf': mapping_publish_laser_tf,
+                'publish_base_link_tf': mapping_publish_base_link_tf,
             }.items(),
             condition=IfCondition(use_mapping),
         ),
