@@ -1,0 +1,49 @@
+color_detector:
+  ros__parameters:
+    target_color: 'red'
+    image_topic: '/camera/color/image_raw'
+    min_area: 100
+
+color_tracker:
+  ros__parameters:
+    target_pose_topic: '/target_pose'
+    cmd_vel_topic: '/cmd_vel'
+    image_width: 640
+    image_height: 480
+    kp_angular: 0.005
+    kp_linear: 0.001
+    max_linear_speed: 0.3
+    max_angular_speed: 0.5
+    target_area_min: 5000
+    target_area_max: 20000
+
+yolo_detector:
+  ros__parameters:
+    image_topic: '/camera/color/image_raw'
+    model_path: 'models/yolov8n.pt'
+    model_name: 'yolov8n'
+    confidence_threshold: 0.5
+    iou_threshold: 0.45
+    device: 'cpu'
+    image_size: 640
+
+line_follower:
+  ros__parameters:
+    image_topic: '/camera/color/image_raw'
+    cmd_vel_topic: '/cmd_vel'
+    image_width: 640
+    image_height: 480
+    kp_angular: 0.008
+    kp_linear: 0.002
+    max_linear_speed: 0.2
+    max_angular_speed: 0.8
+    roi_height_ratio: 0.3
+    line_color: 'black'
+
+defect_detector:
+  ros__parameters:
+    image_topic: '/camera/color/image_raw'
+    min_defect_area: 100
+    canny_threshold1: 50
+    canny_threshold2: 150
+    gaussian_kernel_size: 5
