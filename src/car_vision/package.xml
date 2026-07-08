@@ -1,20 +1,22 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>car_bringup</name>
+  <name>car_vision</name>
   <version>0.1.0</version>
-  <description>Bringup launch files for the iCar ROS2 smart car.</description>
+  <description>Vision detection and tracking nodes for the iCar ROS2 smart car.</description>
   <maintainer email="team@example.com">iCar Team</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <exec_depend>car_control</exec_depend>
-  <exec_depend>car_app_bridge</exec_depend>
-  <exec_depend>car_lidar</exec_depend>
-  <exec_depend>car_navigation</exec_depend>
-  <exec_depend>car_vision</exec_depend>
+  <depend>geometry_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>cv_bridge</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

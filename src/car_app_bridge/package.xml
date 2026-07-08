@@ -1,18 +1,17 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>car_bringup</name>
+  <name>car_app_bridge</name>
   <version>0.1.0</version>
-  <description>Bringup launch files for the iCar ROS2 smart car.</description>
+  <description>TCP command bridge from external apps to iCar ROS2 topics.</description>
   <maintainer email="team@example.com">iCar Team</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <exec_depend>car_control</exec_depend>
-  <exec_depend>car_app_bridge</exec_depend>
-  <exec_depend>car_lidar</exec_depend>
-  <exec_depend>car_navigation</exec_depend>
-  <exec_depend>car_vision</exec_depend>
+  <depend>geometry_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

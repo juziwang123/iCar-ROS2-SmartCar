@@ -20,6 +20,7 @@ class AvoidanceNode(Node):
         self.declare_parameter('linear_speed', 0.15)
         self.declare_parameter('turn_speed', 0.6)
         self.declare_parameter('front_angle_deg', 25.0)
+        self.declare_parameter('front_center_deg', 0.0)
         self.declare_parameter('publish_estop', False)
 
         self.output_topic = str(self.get_parameter('output_topic').value)
@@ -30,6 +31,7 @@ class AvoidanceNode(Node):
         self.linear_speed = float(self.get_parameter('linear_speed').value)
         self.turn_speed = float(self.get_parameter('turn_speed').value)
         self.front_angle_deg = float(self.get_parameter('front_angle_deg').value)
+        self.front_center_rad = math.radians(float(self.get_parameter('front_center_deg').value))
         self.publish_estop = bool(self.get_parameter('publish_estop').value)
 
         self.cmd_publisher = self.create_publisher(Twist, self.output_topic, 10)
@@ -79,11 +81,12 @@ class AvoidanceNode(Node):
                 angle += msg.angle_increment
                 continue
             if msg.range_min < distance < msg.range_max:
-                if abs(angle) <= half_window:
+                relative_angle = self._angle_delta(angle, self.front_center_rad)
+                if abs(relative_angle) <= half_window:
                     front_samples.append(distance)
-                elif 0.0 < angle <= math.pi / 2.0:
+                elif 0.0 < relative_angle <= math.pi / 2.0:
                     left_samples.append(distance)
-                elif -math.pi / 2.0 <= angle < 0.0:
+                elif -math.pi / 2.0 <= relative_angle < 0.0:
                     right_samples.append(distance)
             angle += msg.angle_increment
 
@@ -91,6 +94,10 @@ class AvoidanceNode(Node):
         left_distance = min(left_samples) if left_samples else float('inf')
         right_distance = min(right_samples) if right_samples else float('inf')
         return front_distance, left_distance, right_distance
+
+    @staticmethod
+    def _angle_delta(angle: float, center: float) -> float:
+        return math.atan2(math.sin(angle - center), math.cos(angle - center))
 
 
 def main(args=None) -> None:

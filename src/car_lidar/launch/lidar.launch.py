@@ -10,10 +10,12 @@ def generate_launch_description() -> LaunchDescription:
     params_file = LaunchConfiguration('params_file')
     use_avoidance = LaunchConfiguration('use_avoidance')
     use_tracker = LaunchConfiguration('use_tracker')
+    use_warning = LaunchConfiguration('use_warning')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_avoidance', default_value='true'),
         DeclareLaunchArgument('use_tracker', default_value='false'),
+        DeclareLaunchArgument('use_warning', default_value='false'),
         DeclareLaunchArgument(
             'params_file',
             default_value=PathJoinSubstitution([
@@ -36,6 +38,14 @@ def generate_launch_description() -> LaunchDescription:
             name='lidar_tracker',
             parameters=[params_file, {'output_topic': '/cmd_vel_follow'}],
             condition=IfCondition(use_tracker),
+            output='screen',
+        ),
+        Node(
+            package='car_lidar',
+            executable='warning',
+            name='lidar_warning',
+            parameters=[params_file],
+            condition=IfCondition(use_warning),
             output='screen',
         ),
     ])

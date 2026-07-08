@@ -1,7 +1,8 @@
+from glob import glob
 from setuptools import find_packages, setup
 
 
-package_name = 'car_lidar'
+package_name = 'car_app_bridge'
 
 
 setup(
@@ -11,21 +12,19 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml']),
-        (f'share/{package_name}/launch', ['launch/lidar.launch.py']),
-        (f'share/{package_name}/config', ['config/lidar.yaml']),
+        (f'share/{package_name}/launch', glob('launch/*.launch.py')),
+        (f'share/{package_name}/config', glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='iCar Team',
     maintainer_email='team@example.com',
-    description='Lidar-based safety and perception nodes for the iCar ROS2 smart car.',
+    description='TCP command bridge from external apps to iCar ROS2 topics.',
     license='MIT',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'avoidance = car_lidar.avoidance:main',
-            'tracker = car_lidar.tracker:main',
-            'warning = car_lidar.warning:main',
+            'app_server = car_app_bridge.app_server:main',
         ],
     },
 )

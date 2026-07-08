@@ -10,6 +10,12 @@ def generate_launch_description() -> LaunchDescription:
     use_keyboard = LaunchConfiguration('use_keyboard')
     use_lidar_avoidance = LaunchConfiguration('use_lidar_avoidance')
     use_lidar_tracker = LaunchConfiguration('use_lidar_tracker')
+    use_lidar_warning = LaunchConfiguration('use_lidar_warning')
+    use_vision = LaunchConfiguration('use_vision')
+    use_color_detector = LaunchConfiguration('use_color_detector')
+    use_color_tracker = LaunchConfiguration('use_color_tracker')
+    use_yolo = LaunchConfiguration('use_yolo')
+    use_app_bridge = LaunchConfiguration('use_app_bridge')
     use_mapping = LaunchConfiguration('use_mapping')
     mapping_use_rviz = LaunchConfiguration('mapping_use_rviz')
     mapping_scan_topic = LaunchConfiguration('mapping_scan_topic')
@@ -22,6 +28,8 @@ def generate_launch_description() -> LaunchDescription:
     use_patrol = LaunchConfiguration('use_patrol')
     params_file = LaunchConfiguration('params_file')
     lidar_params_file = LaunchConfiguration('lidar_params_file')
+    vision_params_file = LaunchConfiguration('vision_params_file')
+    app_bridge_params_file = LaunchConfiguration('app_bridge_params_file')
     map_file = LaunchConfiguration('map')
     nav_params_file = LaunchConfiguration('nav_params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -34,6 +42,12 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_keyboard', default_value='true'),
         DeclareLaunchArgument('use_lidar_avoidance', default_value='false'),
         DeclareLaunchArgument('use_lidar_tracker', default_value='false'),
+        DeclareLaunchArgument('use_lidar_warning', default_value='false'),
+        DeclareLaunchArgument('use_vision', default_value='false'),
+        DeclareLaunchArgument('use_color_detector', default_value='true'),
+        DeclareLaunchArgument('use_color_tracker', default_value='false'),
+        DeclareLaunchArgument('use_yolo', default_value='false'),
+        DeclareLaunchArgument('use_app_bridge', default_value='false'),
         DeclareLaunchArgument('use_mapping', default_value='false'),
         DeclareLaunchArgument('mapping_use_rviz', default_value='false'),
         DeclareLaunchArgument('mapping_scan_topic', default_value='/scan'),
@@ -70,6 +84,22 @@ def generate_launch_description() -> LaunchDescription:
                 FindPackageShare('car_bringup'),
                 'config',
                 'lidar.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument(
+            'vision_params_file',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('car_vision'),
+                'config',
+                'vision.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument(
+            'app_bridge_params_file',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('car_app_bridge'),
+                'config',
+                'app_bridge.yaml',
             ]),
         ),
         DeclareLaunchArgument(
@@ -113,7 +143,37 @@ def generate_launch_description() -> LaunchDescription:
                 'params_file': lidar_params_file,
                 'use_avoidance': use_lidar_avoidance,
                 'use_tracker': use_lidar_tracker,
+                'use_warning': use_lidar_warning,
             }.items(),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([
+                    FindPackageShare('car_vision'),
+                    'launch',
+                    'vision.launch.py',
+                ])
+            ),
+            launch_arguments={
+                'params_file': vision_params_file,
+                'use_color_detector': use_color_detector,
+                'use_color_tracker': use_color_tracker,
+                'use_yolo': use_yolo,
+            }.items(),
+            condition=IfCondition(use_vision),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([
+                    FindPackageShare('car_app_bridge'),
+                    'launch',
+                    'app_bridge.launch.py',
+                ])
+            ),
+            launch_arguments={
+                'params_file': app_bridge_params_file,
+            }.items(),
+            condition=IfCondition(use_app_bridge),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(

@@ -1,0 +1,24 @@
+/**:
+  ros__parameters:
+    image_topic: /camera/color/image_raw
+    depth_topic: /camera/depth/image_raw
+    target_topic: /vision/color_target
+    detection_topic: /vision/detections
+    output_topic: /cmd_vel_vision
+    mode_topic: /mode_select
+    h_min: 0
+    s_min: 85
+    v_min: 80
+    h_max: 12
+    s_max: 255
+    v_max: 255
+    min_area: 500.0
+    target_area_ratio: 0.08
+    area_tolerance: 0.02
+    angular_gain: 0.8
+    linear_gain: 0.5
+    max_linear_speed: 0.18
+    max_angular_speed: 0.8
+    confidence_threshold: 0.45
+    model_path: ''
+    class_names_path: ''
