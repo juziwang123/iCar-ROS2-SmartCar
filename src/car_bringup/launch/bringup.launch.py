@@ -16,6 +16,8 @@ def generate_launch_description() -> LaunchDescription:
     use_color_tracker = LaunchConfiguration('use_color_tracker')
     use_yolo = LaunchConfiguration('use_yolo')
     use_app_bridge = LaunchConfiguration('use_app_bridge')
+    app_bridge_host = LaunchConfiguration('app_bridge_host')
+    app_bridge_port = LaunchConfiguration('app_bridge_port')
     use_mapping = LaunchConfiguration('use_mapping')
     mapping_use_rviz = LaunchConfiguration('mapping_use_rviz')
     mapping_scan_topic = LaunchConfiguration('mapping_scan_topic')
@@ -36,6 +38,7 @@ def generate_launch_description() -> LaunchDescription:
     navigation_goal_x = LaunchConfiguration('navigation_goal_x')
     navigation_goal_y = LaunchConfiguration('navigation_goal_y')
     navigation_goal_yaw = LaunchConfiguration('navigation_goal_yaw')
+    navigation_send_goal = LaunchConfiguration('navigation_send_goal')
     waypoints_file = LaunchConfiguration('waypoints_file')
 
     return LaunchDescription([
@@ -48,6 +51,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_color_tracker', default_value='false'),
         DeclareLaunchArgument('use_yolo', default_value='false'),
         DeclareLaunchArgument('use_app_bridge', default_value='false'),
+        DeclareLaunchArgument('app_bridge_host', default_value='0.0.0.0'),
+        DeclareLaunchArgument('app_bridge_port', default_value='8765'),
         DeclareLaunchArgument('use_mapping', default_value='false'),
         DeclareLaunchArgument('mapping_use_rviz', default_value='false'),
         DeclareLaunchArgument('mapping_scan_topic', default_value='/scan'),
@@ -62,6 +67,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('navigation_goal_x', default_value='0.5'),
         DeclareLaunchArgument('navigation_goal_y', default_value='0.0'),
         DeclareLaunchArgument('navigation_goal_yaw', default_value='0.0'),
+        DeclareLaunchArgument('navigation_send_goal', default_value='false'),
         DeclareLaunchArgument(
             'waypoints_file',
             default_value=PathJoinSubstitution([
@@ -172,6 +178,8 @@ def generate_launch_description() -> LaunchDescription:
             ),
             launch_arguments={
                 'params_file': app_bridge_params_file,
+                'host': app_bridge_host,
+                'port': app_bridge_port,
             }.items(),
             condition=IfCondition(use_app_bridge),
         ),
@@ -206,6 +214,7 @@ def generate_launch_description() -> LaunchDescription:
                 'x': navigation_goal_x,
                 'y': navigation_goal_y,
                 'yaw': navigation_goal_yaw,
+                'send_goal': navigation_send_goal,
                 'map': map_file,
                 'params_file': nav_params_file,
                 'use_rviz': navigation_use_rviz,
