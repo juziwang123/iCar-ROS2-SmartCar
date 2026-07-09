@@ -7,6 +7,14 @@ ROS_DISTRO_NAME="${ROS_DISTRO:-foxy}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/.run_logs}"
 PIDS=()
 
+run_in_new_process_group() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@"
+  else
+    "$@"
+  fi
+}
+
 source_ros_environment() {
   local ros_setup="/opt/ros/${ROS_DISTRO_NAME}/setup.bash"
   local workspace_setup="${ROOT_DIR}/install/setup.bash"
@@ -41,7 +49,7 @@ start_background_command() {
   echo "启动：${name}"
   echo "  命令：${command}"
   echo "  日志：${log_file}"
-  bash -lc "${command}" >"${log_file}" 2>&1 &
+  run_in_new_process_group bash -lc "${command}" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   echo
 }
@@ -53,7 +61,7 @@ start_background_args() {
 
   echo "启动：${name}"
   echo "  日志：${log_file}"
-  "$@" >"${log_file}" 2>&1 &
+  run_in_new_process_group "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   echo
 }
@@ -114,16 +122,29 @@ publish_stop() {
 
 stop_background_nodes() {
   for pid in "${PIDS[@]}"; do
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      kill "${pid}" >/dev/null 2>&1 || true
+    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
+      kill -TERM -- "-${pid}" >/dev/null 2>&1 || true
+    elif kill -0 "${pid}" >/dev/null 2>&1; then
+      kill -TERM "${pid}" >/dev/null 2>&1 || true
     fi
   done
+
+  sleep 1
+
+  for pid in "${PIDS[@]}"; do
+    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
+      kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
+    elif kill -0 "${pid}" >/dev/null 2>&1; then
+      kill -KILL "${pid}" >/dev/null 2>&1 || true
+    fi
+  done
+
   wait >/dev/null 2>&1 || true
 }
 
 cleanup_common() {
   local exit_code=$?
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP
   echo
   echo "正在停止小车运动和后台节点..."
   publish_stop

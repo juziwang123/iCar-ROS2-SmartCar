@@ -21,7 +21,7 @@ USE_KEYBOARD="${USE_KEYBOARD:-false}"
 main() {
   source_ros_environment
   prepare_logs
-  trap cleanup_common EXIT INT TERM
+  trap cleanup_common EXIT INT TERM HUP
 
   echo "========================================"
   echo "  iCar 视觉功能测试"

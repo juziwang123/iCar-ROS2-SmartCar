@@ -56,6 +56,14 @@ LIDAR_CMD="${LIDAR_CMD:-ros2 launch sllidar_ros2 sllidar_launch.py}"
 
 PIDS=()
 
+run_in_new_process_group() {
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@"
+  else
+    "$@"
+  fi
+}
+
 # =========================
 # 工具函数
 # =========================
@@ -133,7 +141,7 @@ start_background_command() {
   echo "启动：${name}"
   echo "  命令：${command}"
   echo "  日志：${log_file}"
-  bash -lc "${command}" >"${log_file}" 2>&1 &
+  run_in_new_process_group bash -lc "${command}" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   echo
 }
@@ -145,7 +153,7 @@ start_background_args() {
 
   echo "启动：${name}"
   echo "  日志：${log_file}"
-  "$@" >"${log_file}" 2>&1 &
+  run_in_new_process_group "$@" >"${log_file}" 2>&1 &
   PIDS+=("$!")
   echo
 }
@@ -206,8 +214,20 @@ publish_stop() {
 
 stop_background_nodes() {
   for pid in "${PIDS[@]}"; do
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      kill "${pid}" >/dev/null 2>&1 || true
+    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
+      kill -TERM -- "-${pid}" >/dev/null 2>&1 || true
+    elif kill -0 "${pid}" >/dev/null 2>&1; then
+      kill -TERM "${pid}" >/dev/null 2>&1 || true
+    fi
+  done
+
+  sleep 1
+
+  for pid in "${PIDS[@]}"; do
+    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
+      kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
+    elif kill -0 "${pid}" >/dev/null 2>&1; then
+      kill -KILL "${pid}" >/dev/null 2>&1 || true
     fi
   done
 
@@ -216,7 +236,7 @@ stop_background_nodes() {
 
 cleanup() {
   local exit_code=$?
-  trap - EXIT INT TERM
+  trap - EXIT INT TERM HUP
 
   echo
   echo "正在停止小车运动和后台节点..."
@@ -252,7 +272,7 @@ main() {
 
   source_ros_environment
   mkdir -p "${LOG_DIR}"
-  trap cleanup EXIT INT TERM
+  trap cleanup EXIT INT TERM HUP
 
   print_title
   print_config
