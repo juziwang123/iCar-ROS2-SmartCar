@@ -8,14 +8,6 @@ LOG_DIR="${LOG_DIR:-${ROOT_DIR}/.run_logs}"
 PIDS=()
 PGIDS=()
 
-run_in_new_process_group() {
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "$@"
-  else
-    "$@"
-  fi
-}
-
 source_ros_environment() {
   local ros_setup="/opt/ros/${ROS_DISTRO_NAME}/setup.bash"
   local workspace_setup="${ROOT_DIR}/install/setup.bash"
@@ -50,7 +42,11 @@ start_background_command() {
   echo "启动：${name}"
   echo "  命令：${command}"
   echo "  日志：${log_file}"
-  run_in_new_process_group bash -lc "${command}" >"${log_file}" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash -lc "${command}" >"${log_file}" 2>&1 &
+  else
+    bash -lc "${command}" >"${log_file}" 2>&1 &
+  fi
   register_background_process "$!"
   echo
 }
@@ -62,7 +58,11 @@ start_background_args() {
 
   echo "启动：${name}"
   echo "  日志：${log_file}"
-  run_in_new_process_group "$@" >"${log_file}" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    setsid "$@" >"${log_file}" 2>&1 &
+  else
+    "$@" >"${log_file}" 2>&1 &
+  fi
   register_background_process "$!"
   echo
 }
