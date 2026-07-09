@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
-# One-key navigation test.
+# 自主导航功能一键测试脚本。
 #
-# Examples:
+# 使用示例：
 #   bash scripts/start_navigation_test.sh
 #   NAV_MODE=single GOAL_X=1.0 GOAL_Y=0.0 GOAL_YAW=0.0 bash scripts/start_navigation_test.sh
 #   NAV_MODE=patrol USE_RVIZ=true bash scripts/start_navigation_test.sh
-#   MAP=/absolute/path/to/map.yaml bash scripts/start_navigation_test.sh
+#   MAP=/地图文件绝对路径/map.yaml bash scripts/start_navigation_test.sh
 
 set -euo pipefail
 
@@ -28,18 +28,18 @@ main() {
   trap cleanup_common EXIT INT TERM
 
   echo "========================================"
-  echo "  iCar navigation test"
+  echo "  iCar 自主导航测试"
   echo "========================================"
-  echo "mode : ${NAV_MODE}"
-  echo "map  : ${MAP}"
-  echo "rviz : ${USE_RVIZ}"
+  echo "导航模式：${NAV_MODE}"
+  echo "地图文件：${MAP}"
+  echo "启动 RViz：${USE_RVIZ}"
   echo
 
   start_vendor_base_stack
 
   if [[ "${NAV_MODE}" == "patrol" ]]; then
     start_background_args \
-      "project patrol navigation" \
+      "本项目多点巡航导航" \
       "${LOG_DIR}/navigation_patrol.log" \
       ros2 launch car_bringup bringup.launch.py \
         use_keyboard:=false \
@@ -55,7 +55,7 @@ main() {
         use_sim_time:=false
   else
     start_background_args \
-      "project single-goal navigation" \
+      "本项目单点目标导航" \
       "${LOG_DIR}/navigation_single.log" \
       ros2 launch car_bringup bringup.launch.py \
         use_keyboard:=false \
@@ -78,7 +78,7 @@ main() {
   wait_for_node /bt_navigator 60 "${LOG_DIR}/navigation_${NAV_MODE}.log" || true
 
   ros2 topic pub --once /mode_select std_msgs/msg/String "{data: nav}" >/dev/null 2>&1 || true
-  echo "Navigation test is running. Press Ctrl+C to stop."
+  echo "导航测试正在运行。在当前终端按 Ctrl+C 停止。"
   while true; do sleep 1; done
 }
 

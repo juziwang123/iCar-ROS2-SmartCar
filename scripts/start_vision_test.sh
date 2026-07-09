@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-# One-key vision test.
+# 视觉功能一键测试脚本。
 #
-# Examples:
+# 使用示例：
 #   bash scripts/start_vision_test.sh
 #   USE_TRACKER=true bash scripts/start_vision_test.sh
-#   USE_YOLO=true MODEL_PATH=/path/to/model.onnx bash scripts/start_vision_test.sh
+#   USE_YOLO=true bash scripts/start_vision_test.sh
 #   START_CAMERA=0 bash scripts/start_vision_test.sh
 
 set -euo pipefail
@@ -24,18 +24,18 @@ main() {
   trap cleanup_common EXIT INT TERM
 
   echo "========================================"
-  echo "  iCar vision test"
+  echo "  iCar 视觉功能测试"
   echo "========================================"
-  echo "color detector: ${USE_COLOR_DETECTOR}"
-  echo "color tracker : ${USE_TRACKER}"
-  echo "yolo detector : ${USE_YOLO}"
+  echo "颜色检测：${USE_COLOR_DETECTOR}"
+  echo "颜色追踪：${USE_TRACKER}"
+  echo "YOLO 检测：${USE_YOLO}"
   echo
 
   start_vendor_base_stack
   start_vendor_camera
 
   start_background_args \
-    "project control + vision nodes" \
+    "本项目控制链路和视觉节点" \
     "${LOG_DIR}/vision_test.log" \
     ros2 launch car_bringup bringup.launch.py \
       use_keyboard:="${USE_KEYBOARD}" \
@@ -57,11 +57,11 @@ main() {
     ros2 topic pub --once /mode_select std_msgs/msg/String "{data: vision}" >/dev/null 2>&1 || true
   fi
 
-  echo "Vision test is running. Useful monitors:"
+  echo "视觉测试正在运行。可在另一个终端查看："
   echo "  ros2 topic echo /vision/color_target"
   echo "  ros2 topic echo /vision/detections"
   echo "  ros2 topic echo /cmd_vel_vision"
-  echo "Press Ctrl+C here to stop."
+  echo "在当前终端按 Ctrl+C 停止。"
   while true; do sleep 1; done
 }
 

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 
-# One-key real-car lidar test.
+# 实车雷达功能一键测试脚本。
 #
-# Examples:
+# 使用示例：
 #   bash scripts/start_lidar_test.sh
 #   USE_TRACKER=true bash scripts/start_lidar_test.sh
 #   USE_WARNING=true USE_AVOIDANCE=false bash scripts/start_lidar_test.sh
 #   START_VENDOR_BRINGUP=0 bash scripts/start_lidar_test.sh
 #
-# Safety:
-#   Put the car on blocks for the first run.
-#   Press Ctrl+C to stop and publish zero velocity.
+# 安全提示：
+#   第一次运行建议把小车架空，确认方向和速度正常后再落地。
+#   按 Ctrl+C 会停止脚本，并发布零速度。
 
 set -euo pipefail
 
@@ -28,18 +28,18 @@ main() {
   trap cleanup_common EXIT INT TERM
 
   echo "========================================"
-  echo "  iCar lidar test"
+  echo "  iCar 雷达功能测试"
   echo "========================================"
-  echo "avoidance: ${USE_AVOIDANCE}"
-  echo "tracker  : ${USE_TRACKER}"
-  echo "warning  : ${USE_WARNING}"
-  echo "keyboard : ${USE_KEYBOARD}"
+  echo "避障功能：${USE_AVOIDANCE}"
+  echo "跟随功能：${USE_TRACKER}"
+  echo "警戒功能：${USE_WARNING}"
+  echo "键盘遥控：${USE_KEYBOARD}"
   echo
 
   start_vendor_base_stack
 
   start_background_args \
-    "project control + lidar nodes" \
+    "本项目控制链路和雷达节点" \
     "${LOG_DIR}/lidar_test.log" \
     ros2 launch car_bringup bringup.launch.py \
       use_keyboard:="${USE_KEYBOARD}" \
@@ -64,11 +64,11 @@ main() {
     wait_for_node /lidar_warning 20 "${LOG_DIR}/lidar_test.log" || true
   fi
 
-  echo "Lidar test is running. Useful monitors:"
+  echo "雷达测试正在运行。可在另一个终端查看："
   echo "  ros2 topic echo /lidar/override_active"
   echo "  ros2 topic echo /cmd_vel_lidar"
   echo "  ros2 topic echo /lidar/warning_state"
-  echo "Press Ctrl+C here to stop."
+  echo "在当前终端按 Ctrl+C 停止。"
   while true; do sleep 1; done
 }
 

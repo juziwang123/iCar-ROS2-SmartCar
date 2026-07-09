@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 
-# One-key APP/TCP bridge test.
+# APP/TCP 控制桥接一键测试脚本。
 #
-# Examples:
+# 使用示例：
 #   bash scripts/start_app_bridge_test.sh
 #   PORT=9000 bash scripts/start_app_bridge_test.sh
 #
-# From another terminal:
-#   printf 'forward\nstop\nmode nav\nestop off\n' | nc <car-ip> 8765
-#   printf '{"cmd":"move","linear":0.1,"angular":0.0}\n' | nc <car-ip> 8765
+# 在另一个终端发送测试命令：
+#   printf 'forward\nstop\nmode nav\nestop off\n' | nc <小车IP> 8765
+#   printf '{"cmd":"move","linear":0.1,"angular":0.0}\n' | nc <小车IP> 8765
 
 set -euo pipefail
 
@@ -24,15 +24,15 @@ main() {
   trap cleanup_common EXIT INT TERM
 
   echo "========================================"
-  echo "  iCar APP bridge test"
+  echo "  iCar APP/TCP 桥接测试"
   echo "========================================"
-  echo "port: ${PORT}"
+  echo "监听端口：${PORT}"
   echo
 
   start_vendor_base_stack
 
   start_background_args \
-    "project control + app bridge" \
+    "本项目控制链路和 APP 桥接节点" \
     "${LOG_DIR}/app_bridge_test.log" \
     ros2 launch car_bringup bringup.launch.py \
       use_keyboard:="${USE_KEYBOARD}" \
@@ -50,11 +50,11 @@ main() {
   wait_for_node /safety_mux 20 "${LOG_DIR}/app_bridge_test.log" || true
   wait_for_node /app_server 20 "${LOG_DIR}/app_bridge_test.log" || true
 
-  echo "APP bridge is running."
-  echo "Try from another terminal:"
-  echo "  printf 'forward\\nstop\\n' | nc <car-ip> ${PORT}"
-  echo "  printf '{\"cmd\":\"move\",\"linear\":0.1,\"angular\":0.0}\\n' | nc <car-ip> ${PORT}"
-  echo "Press Ctrl+C here to stop."
+  echo "APP 桥接服务正在运行。"
+  echo "可在另一个终端尝试："
+  echo "  printf 'forward\\nstop\\n' | nc <小车IP> ${PORT}"
+  echo "  printf '{\"cmd\":\"move\",\"linear\":0.1,\"angular\":0.0}\\n' | nc <小车IP> ${PORT}"
+  echo "在当前终端按 Ctrl+C 停止。"
   while true; do sleep 1; done
 }
 
