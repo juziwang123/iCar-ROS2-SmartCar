@@ -168,6 +168,7 @@ register_background_process() {
   pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
   if [[ -n "${pgid}" ]]; then
     PGIDS+=("${pgid}")
+    
   else
     PGIDS+=("${pid}")
   fi

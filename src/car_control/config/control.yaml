@@ -4,6 +4,7 @@
     manual_timeout_sec: 0.6
     auto_timeout_sec: 0.6
     publish_rate_hz: 20.0
+    allow_manual_escape_when_lidar_override: true
     repeat_rate_hz: 20.0
     direct_cmd_vel: false
     idle_stop_cycles: 4
