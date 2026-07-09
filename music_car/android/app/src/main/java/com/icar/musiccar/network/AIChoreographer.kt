@@ -71,7 +71,7 @@ class AIChoreographer {
         }
     }
 
-    // ── 内部 ──────────────────────────────────
+    // -- 内部方法 --
 
     private suspend fun post(path: String, data: Any): ChoreographResponse {
         val body = json.encodeToString(data).toRequestBody(jsonMediaType)
@@ -96,7 +96,7 @@ class AIChoreographer {
     }
 }
 
-// ── Prompt 响应 ──────────────────────────────
+// -- Prompt 响应 --
 
 data class PromptResponse(
     val ok: Boolean,

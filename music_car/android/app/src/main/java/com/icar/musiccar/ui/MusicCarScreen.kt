@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.icar.musiccar.AppConstants
+import com.icar.musiccar.CTRL_MODE_NAMES
 import com.icar.musiccar.data.DANCE_ROUTINES
 import com.icar.musiccar.engine.BeatEngine
 import com.icar.musiccar.engine.DanceEngine
@@ -336,7 +337,7 @@ fun MusicCarScreen() {
                             Text(currentMoveDesc, fontSize = 14.sp, color = MaterialTheme.colorScheme.primary)
                             Spacer(modifier = Modifier.height(8.dp))
                             LinearProgressIndicator(
-                                progress = { progress / 100f },
+                                progress = progress / 100f,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             Text("${progress.toInt()}%", fontSize = 12.sp)
