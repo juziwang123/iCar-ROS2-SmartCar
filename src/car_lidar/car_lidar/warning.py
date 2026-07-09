@@ -20,14 +20,15 @@ class WarningNode(Node):
         self.declare_parameter('warning_distance', 0.55)
         self.declare_parameter('clear_distance', 0.65)
         self.declare_parameter('front_angle_deg', 40.0)
-        self.declare_parameter('front_center_deg', 0.0)
+        self.declare_parameter('front_center_deg', 180.0)
         self.declare_parameter('enable_control', False)
         self.declare_parameter('turn_speed', 0.5)
 
         self.warning_distance = float(self.get_parameter('warning_distance').value)
         self.clear_distance = float(self.get_parameter('clear_distance').value)
         self.front_angle_deg = float(self.get_parameter('front_angle_deg').value)
-        self.front_center_rad = math.radians(float(self.get_parameter('front_center_deg').value))
+        self.front_center_deg = float(self.get_parameter('front_center_deg').value)
+        self.front_center_rad = math.radians(self.front_center_deg)
         self.enable_control = bool(self.get_parameter('enable_control').value)
         self.turn_speed = float(self.get_parameter('turn_speed').value)
         self.warning_active = False
@@ -38,7 +39,10 @@ class WarningNode(Node):
         self.cmd_publisher = self.create_publisher(Twist, str(self.get_parameter('output_topic').value), 10)
         self.override_publisher = self.create_publisher(Bool, str(self.get_parameter('override_topic').value), 10)
         self.create_subscription(LaserScan, str(self.get_parameter('scan_topic').value), self._on_scan, 10)
-        self.get_logger().info('Lidar warning started')
+        self.get_logger().info(
+            f'Lidar warning started: front_center_deg={self.front_center_deg}, '
+            f'warning_distance={self.warning_distance}'
+        )
 
     def _on_scan(self, msg: LaserScan) -> None:
         front, left, right = self._extract_distances(msg)

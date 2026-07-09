@@ -13,7 +13,7 @@ class TrackerNode(Node):
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('output_topic', '/cmd_vel_follow')
         self.declare_parameter('follow_angle_deg', 35.0)
-        self.declare_parameter('front_center_deg', 0.0)
+        self.declare_parameter('front_center_deg', 180.0)
         self.declare_parameter('desired_distance', 0.8)
         self.declare_parameter('distance_tolerance', 0.1)
         self.declare_parameter('max_follow_distance', 2.0)

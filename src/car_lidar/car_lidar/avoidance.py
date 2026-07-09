@@ -20,7 +20,7 @@ class AvoidanceNode(Node):
         self.declare_parameter('linear_speed', 0.15)
         self.declare_parameter('turn_speed', 0.6)
         self.declare_parameter('front_angle_deg', 25.0)
-        self.declare_parameter('front_center_deg', 0.0)
+        self.declare_parameter('front_center_deg', 180.0)
         self.declare_parameter('allow_forward_in_slow_zone', False)
         self.declare_parameter('turn_in_slow_zone', False)
         self.declare_parameter('publish_estop', False)
@@ -33,7 +33,8 @@ class AvoidanceNode(Node):
         self.linear_speed = float(self.get_parameter('linear_speed').value)
         self.turn_speed = float(self.get_parameter('turn_speed').value)
         self.front_angle_deg = float(self.get_parameter('front_angle_deg').value)
-        self.front_center_rad = math.radians(float(self.get_parameter('front_center_deg').value))
+        self.front_center_deg = float(self.get_parameter('front_center_deg').value)
+        self.front_center_rad = math.radians(self.front_center_deg)
         self.allow_forward_in_slow_zone = bool(self.get_parameter('allow_forward_in_slow_zone').value)
         self.turn_in_slow_zone = bool(self.get_parameter('turn_in_slow_zone').value)
         self.publish_estop = bool(self.get_parameter('publish_estop').value)
@@ -47,7 +48,10 @@ class AvoidanceNode(Node):
             self._on_scan,
             10,
         )
-        self.get_logger().info('Lidar avoidance started')
+        self.get_logger().info(
+            f'Lidar avoidance started: front_center_deg={self.front_center_deg}, '
+            f'front_distance_threshold={self.front_distance_threshold}'
+        )
 
     def _on_scan(self, msg: LaserScan) -> None:
         front_distance, left_distance, right_distance = self._extract_distances(msg)

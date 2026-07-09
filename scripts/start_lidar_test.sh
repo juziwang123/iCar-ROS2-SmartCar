@@ -55,13 +55,16 @@ main() {
   wait_for_node /safety_mux 20 "${LOG_DIR}/lidar_test.log" || true
   if [[ "${USE_AVOIDANCE}" == "true" ]]; then
     wait_for_node /lidar_avoidance 20 "${LOG_DIR}/lidar_test.log" || true
+    ros2 param get /lidar_avoidance front_center_deg 2>/dev/null || true
   fi
   if [[ "${USE_TRACKER}" == "true" ]]; then
     wait_for_node /lidar_tracker 20 "${LOG_DIR}/lidar_test.log" || true
+    ros2 param get /lidar_tracker front_center_deg 2>/dev/null || true
     ros2 topic pub --once /mode_select std_msgs/msg/String "{data: follow}" >/dev/null 2>&1 || true
   fi
   if [[ "${USE_WARNING}" == "true" ]]; then
     wait_for_node /lidar_warning 20 "${LOG_DIR}/lidar_test.log" || true
+    ros2 param get /lidar_warning front_center_deg 2>/dev/null || true
   fi
 
   echo "雷达测试正在运行。可在另一个终端查看："
