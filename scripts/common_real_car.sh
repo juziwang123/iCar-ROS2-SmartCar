@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROS_DISTRO_NAME="${ROS_DISTRO:-foxy}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/.run_logs}"
 PIDS=()
+PGIDS=()
 
 run_in_new_process_group() {
   if command -v setsid >/dev/null 2>&1; then
@@ -50,7 +51,7 @@ start_background_command() {
   echo "  命令：${command}"
   echo "  日志：${log_file}"
   run_in_new_process_group bash -lc "${command}" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
+  register_background_process "$!"
   echo
 }
 
@@ -62,8 +63,22 @@ start_background_args() {
   echo "启动：${name}"
   echo "  日志：${log_file}"
   run_in_new_process_group "$@" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
+  register_background_process "$!"
   echo
+}
+
+register_background_process() {
+  local pid=$1
+  local pgid
+
+  PIDS+=("${pid}")
+  sleep 0.1
+  pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -n "${pgid}" ]]; then
+    PGIDS+=("${pgid}")
+  else
+    PGIDS+=("${pid}")
+  fi
 }
 
 wait_for_topic() {
@@ -121,20 +136,28 @@ publish_stop() {
 }
 
 stop_background_nodes() {
+  for pgid in "${PGIDS[@]}"; do
+    if kill -0 -- "-${pgid}" >/dev/null 2>&1; then
+      kill -TERM -- "-${pgid}" >/dev/null 2>&1 || true
+    fi
+  done
+
   for pid in "${PIDS[@]}"; do
-    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
-      kill -TERM -- "-${pid}" >/dev/null 2>&1 || true
-    elif kill -0 "${pid}" >/dev/null 2>&1; then
+    if kill -0 "${pid}" >/dev/null 2>&1; then
       kill -TERM "${pid}" >/dev/null 2>&1 || true
     fi
   done
 
   sleep 1
 
+  for pgid in "${PGIDS[@]}"; do
+    if kill -0 -- "-${pgid}" >/dev/null 2>&1; then
+      kill -KILL -- "-${pgid}" >/dev/null 2>&1 || true
+    fi
+  done
+
   for pid in "${PIDS[@]}"; do
-    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
-      kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
-    elif kill -0 "${pid}" >/dev/null 2>&1; then
+    if kill -0 "${pid}" >/dev/null 2>&1; then
       kill -KILL "${pid}" >/dev/null 2>&1 || true
     fi
   done

@@ -25,11 +25,11 @@ ROS_DISTRO_NAME="${ROS_DISTRO:-foxy}"
 LOG_DIR="${ROOT_DIR}/.run_logs"
 MAP_SAVE_PREFIX="${MAP_SAVE_PREFIX:-${ROOT_DIR}/src/car_navigation/maps/lab_map}"
 
-# 默认使用厂家完整 bringup。它会启动底盘、里程计/EKF、雷达和必要 TF。
+# 默认使用本项目封装的厂家基础 bringup：启动底盘、里程计/EKF、雷达和必要 TF，但不启动厂家 joy_ctrl。
 START_VENDOR_BRINGUP="${START_VENDOR_BRINGUP:-1}"
 ROBOT_TYPE="${ROBOT_TYPE:-x3}"
 RPLIDAR_TYPE="${RPLIDAR_TYPE:-a1}"
-VENDOR_BRINGUP_CMD="${VENDOR_BRINGUP_CMD:-ros2 launch icar_nav laser_bringup_launch.py robot_type:=${ROBOT_TYPE} rplidar_type:=${RPLIDAR_TYPE}}"
+VENDOR_BRINGUP_CMD="${VENDOR_BRINGUP_CMD:-ros2 launch car_bringup vendor_x3_base_no_joy.launch.py rplidar_type:=${RPLIDAR_TYPE}}"
 
 # 如果不使用厂家完整 bringup，可以分开启动底盘/雷达。
 START_BASE_DRIVER="${START_BASE_DRIVER:-1}"
@@ -55,6 +55,7 @@ BASE_DRIVER_CMD="${BASE_DRIVER_CMD:-ros2 run icar_bringup Mcnamu_driver_X3}"
 LIDAR_CMD="${LIDAR_CMD:-ros2 launch sllidar_ros2 sllidar_launch.py}"
 
 PIDS=()
+PGIDS=()
 
 run_in_new_process_group() {
   if command -v setsid >/dev/null 2>&1; then
@@ -142,7 +143,7 @@ start_background_command() {
   echo "  命令：${command}"
   echo "  日志：${log_file}"
   run_in_new_process_group bash -lc "${command}" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
+  register_background_process "$!"
   echo
 }
 
@@ -154,8 +155,22 @@ start_background_args() {
   echo "启动：${name}"
   echo "  日志：${log_file}"
   run_in_new_process_group "$@" >"${log_file}" 2>&1 &
-  PIDS+=("$!")
+  register_background_process "$!"
   echo
+}
+
+register_background_process() {
+  local pid=$1
+  local pgid
+
+  PIDS+=("${pid}")
+  sleep 0.1
+  pgid="$(ps -o pgid= -p "${pid}" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -n "${pgid}" ]]; then
+    PGIDS+=("${pgid}")
+  else
+    PGIDS+=("${pid}")
+  fi
 }
 
 wait_for_topic() {
@@ -213,20 +228,28 @@ publish_stop() {
 }
 
 stop_background_nodes() {
+  for pgid in "${PGIDS[@]}"; do
+    if kill -0 -- "-${pgid}" >/dev/null 2>&1; then
+      kill -TERM -- "-${pgid}" >/dev/null 2>&1 || true
+    fi
+  done
+
   for pid in "${PIDS[@]}"; do
-    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
-      kill -TERM -- "-${pid}" >/dev/null 2>&1 || true
-    elif kill -0 "${pid}" >/dev/null 2>&1; then
+    if kill -0 "${pid}" >/dev/null 2>&1; then
       kill -TERM "${pid}" >/dev/null 2>&1 || true
     fi
   done
 
   sleep 1
 
+  for pgid in "${PGIDS[@]}"; do
+    if kill -0 -- "-${pgid}" >/dev/null 2>&1; then
+      kill -KILL -- "-${pgid}" >/dev/null 2>&1 || true
+    fi
+  done
+
   for pid in "${PIDS[@]}"; do
-    if kill -0 -- "-${pid}" >/dev/null 2>&1; then
-      kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
-    elif kill -0 "${pid}" >/dev/null 2>&1; then
+    if kill -0 "${pid}" >/dev/null 2>&1; then
       kill -KILL "${pid}" >/dev/null 2>&1 || true
     fi
   done
@@ -279,7 +302,7 @@ main() {
   print_keys
 
   if [[ "${START_VENDOR_BRINGUP}" == "1" ]]; then
-    start_background_command "厂家完整底盘/雷达/TF 启动" "${LOG_DIR}/vendor_bringup.log" "${VENDOR_BRINGUP_CMD}"
+    start_background_command "厂家底盘/雷达/TF 启动（不启动 joy_ctrl）" "${LOG_DIR}/vendor_bringup.log" "${VENDOR_BRINGUP_CMD}"
     wait_for_topic /scan 25 "${LOG_DIR}/vendor_bringup.log" || true
     wait_for_topic /odom 25 "${LOG_DIR}/vendor_bringup.log" || true
   else
