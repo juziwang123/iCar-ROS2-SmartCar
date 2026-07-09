@@ -11,7 +11,10 @@ setup(
     data_files=[
         ('share/ament_index/resource_index/packages', [f'resource/{package_name}']),
         (f'share/{package_name}', ['package.xml']),
-        (f'share/{package_name}/launch', ['launch/bringup.launch.py']),
+        (f'share/{package_name}/launch', [
+            'launch/bringup.launch.py',
+            'launch/vendor_x3_base_no_joy.launch.py',
+        ]),
         (f'share/{package_name}/config', ['config/params.yaml', 'config/lidar.yaml']),
     ],
     install_requires=['setuptools'],

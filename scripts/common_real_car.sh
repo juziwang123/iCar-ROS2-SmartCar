@@ -136,7 +136,7 @@ start_vendor_base_stack() {
   local start_vendor_bringup="${START_VENDOR_BRINGUP:-1}"
   local robot_type="${ROBOT_TYPE:-x3}"
   local rplidar_type="${RPLIDAR_TYPE:-a1}"
-  local vendor_bringup_cmd="${VENDOR_BRINGUP_CMD:-ros2 launch icar_nav laser_bringup_launch.py robot_type:=${robot_type} rplidar_type:=${rplidar_type}}"
+  local vendor_bringup_cmd="${VENDOR_BRINGUP_CMD:-ros2 launch car_bringup vendor_x3_base_no_joy.launch.py rplidar_type:=${rplidar_type}}"
   local base_driver_cmd="${BASE_DRIVER_CMD:-ros2 run icar_bringup Mcnamu_driver_X3}"
   local lidar_cmd="${LIDAR_CMD:-ros2 launch sllidar_ros2 sllidar_launch.py}"
 
