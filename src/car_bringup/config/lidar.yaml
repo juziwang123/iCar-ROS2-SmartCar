@@ -10,7 +10,7 @@
     linear_speed: 0.15
     turn_speed: 0.6
     front_angle_deg: 25.0
-    front_center_deg: 0.0
+    front_center_deg: 180.0
     allow_forward_in_slow_zone: false
     turn_in_slow_zone: false
     publish_estop: false
