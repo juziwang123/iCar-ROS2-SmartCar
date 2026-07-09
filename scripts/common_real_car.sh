@@ -130,9 +130,16 @@ wait_for_node() {
 }
 
 publish_stop() {
-  ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-  ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-  ros2 topic pub --once /control/cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+  local i
+  for i in 1 2 3; do
+    ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /control/cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    sleep 0.1
+  done
+  ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
 }
 
 stop_background_nodes() {
@@ -172,6 +179,7 @@ cleanup_common() {
   echo "正在停止小车运动和后台节点..."
   publish_stop
   stop_background_nodes
+  publish_stop
   echo "日志目录：${LOG_DIR}"
   exit "${exit_code}"
 }

@@ -24,7 +24,8 @@ class TrackerNode(Node):
 
         self.output_topic = str(self.get_parameter('output_topic').value)
         self.follow_angle_deg = float(self.get_parameter('follow_angle_deg').value)
-        self.front_center_rad = math.radians(float(self.get_parameter('front_center_deg').value))
+        self.front_center_deg = float(self.get_parameter('front_center_deg').value)
+        self.front_center_rad = math.radians(self.front_center_deg)
         self.desired_distance = float(self.get_parameter('desired_distance').value)
         self.distance_tolerance = float(self.get_parameter('distance_tolerance').value)
         self.max_follow_distance = float(self.get_parameter('max_follow_distance').value)
@@ -40,7 +41,10 @@ class TrackerNode(Node):
             self._on_scan,
             10,
         )
-        self.get_logger().info('Lidar tracker started')
+        self.get_logger().info(
+            f'Lidar tracker started: front_center_deg={self.front_center_deg}, '
+            f'desired_distance={self.desired_distance}'
+        )
 
     def _on_scan(self, msg: LaserScan) -> None:
         target = self._find_target(msg)
@@ -81,6 +85,9 @@ class TrackerNode(Node):
     def _angle_delta(angle: float, center: float) -> float:
         return math.atan2(math.sin(angle - center), math.cos(angle - center))
 
+    def stop(self) -> None:
+        self.publisher.publish(Twist())
+
 
 def main(args=None) -> None:
     rclpy.init(args=args)
@@ -90,5 +97,6 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop()
         node.destroy_node()
         rclpy.shutdown()
