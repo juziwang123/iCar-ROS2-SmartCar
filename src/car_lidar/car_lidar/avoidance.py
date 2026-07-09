@@ -22,6 +22,7 @@ class AvoidanceNode(Node):
         self.declare_parameter('front_angle_deg', 25.0)
         self.declare_parameter('front_center_deg', 0.0)
         self.declare_parameter('allow_forward_in_slow_zone', False)
+        self.declare_parameter('turn_in_slow_zone', False)
         self.declare_parameter('publish_estop', False)
 
         self.output_topic = str(self.get_parameter('output_topic').value)
@@ -34,6 +35,7 @@ class AvoidanceNode(Node):
         self.front_angle_deg = float(self.get_parameter('front_angle_deg').value)
         self.front_center_rad = math.radians(float(self.get_parameter('front_center_deg').value))
         self.allow_forward_in_slow_zone = bool(self.get_parameter('allow_forward_in_slow_zone').value)
+        self.turn_in_slow_zone = bool(self.get_parameter('turn_in_slow_zone').value)
         self.publish_estop = bool(self.get_parameter('publish_estop').value)
 
         self.cmd_publisher = self.create_publisher(Twist, self.output_topic, 10)
@@ -58,13 +60,13 @@ class AvoidanceNode(Node):
 
         if front_distance < self.front_distance_threshold:
             override_active = True
-            command.angular.z = self.turn_speed if left_distance >= right_distance else -self.turn_speed
             estop = self.publish_estop
         elif front_distance < self.slow_distance_threshold:
             override_active = True
             if self.allow_forward_in_slow_zone:
                 command.linear.x = self.linear_speed
-            command.angular.z = (self.turn_speed * 0.5) if left_distance >= right_distance else (-self.turn_speed * 0.5)
+            if self.turn_in_slow_zone:
+                command.angular.z = (self.turn_speed * 0.5) if left_distance >= right_distance else (-self.turn_speed * 0.5)
 
         if override_active:
             self.cmd_publisher.publish(command)

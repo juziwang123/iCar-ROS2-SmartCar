@@ -100,8 +100,8 @@ class SafetyMux(Node):
             return
 
         lidar_msg = self._fresh_message(self.lidar, self.auto_timeout)
-        if self.lidar_override_active and lidar_msg is not None:
-            self.publisher.publish(lidar_msg)
+        if self.lidar_override_active:
+            self.publisher.publish(lidar_msg if lidar_msg is not None else msg)
             return
 
         selected = self._select_by_mode()

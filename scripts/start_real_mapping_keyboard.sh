@@ -227,6 +227,52 @@ publish_stop() {
   ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
 }
 
+start_lidar_avoidance_notice_monitor() {
+  if [[ "${USE_LIDAR_AVOIDANCE}" != "true" ]]; then
+    return 0
+  fi
+
+  echo "启动：雷达避障控制台通知"
+  python3 - <<'PY' &
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Bool
+
+
+class LidarAvoidanceNotice(Node):
+    def __init__(self) -> None:
+        super().__init__('lidar_avoidance_console_notice')
+        self.active = False
+        self.create_subscription(Bool, '/lidar/override_active', self._on_override, 10)
+
+    def _on_override(self, msg: Bool) -> None:
+        active = bool(msg.data)
+        if active and not self.active:
+            print('[雷达避障] 已触发：前方检测到障碍物，小车已停止。', flush=True)
+        elif self.active and not active:
+            print('[雷达避障] 已解除：恢复键盘控制。', flush=True)
+        self.active = active
+
+
+def main() -> None:
+    rclpy.init()
+    node = LidarAvoidanceNotice()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+PY
+  register_background_process "$!"
+  echo
+}
+
 stop_background_nodes() {
   for pgid in "${PGIDS[@]}"; do
     if kill -0 -- "-${pgid}" >/dev/null 2>&1; then
@@ -342,6 +388,10 @@ main() {
       use_patrol:=false
 
   wait_for_node /safety_mux 20 "${LOG_DIR}/bringup_mapping.log" || true
+  if [[ "${USE_LIDAR_AVOIDANCE}" == "true" ]]; then
+    wait_for_node /lidar_avoidance 20 "${LOG_DIR}/bringup_mapping.log" || true
+    start_lidar_avoidance_notice_monitor
+  fi
   wait_for_node /sync_slam_toolbox_node 20 "${LOG_DIR}/bringup_mapping.log" || true
 
   echo "准备完成，现在进入键盘遥控。"
