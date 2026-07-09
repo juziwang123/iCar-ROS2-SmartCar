@@ -11,6 +11,7 @@
     turn_speed: 0.6
     front_angle_deg: 25.0
     front_center_deg: 0.0
+    allow_forward_in_slow_zone: false
     publish_estop: false
     warning_distance: 0.55
     clear_distance: 0.65
