@@ -27,6 +27,8 @@ ros2 launch car_bringup bringup.launch.py use_app_bridge:=true
 | `estop` | `active`: 布尔值 | 发布 `/emergency_stop`。`false` 释放急停。 |
 | `nav_goal` | `x`, `y`, 可选 `yaw`、`frame_id` | 发布 `/goal_pose`；若 Nav2 action server 已就绪，也发送 `NavigateToPose`。 |
 | `nav_cancel` | 无 | 取消由 APP 桥接提交且已接受的导航目标。 |
+| `follow_person` | `track_id`，可选 `activate` | 选择 YOLO 事件中对应的人员 ID；默认切换到 `follow` 模式。 |
+| `stop_follow` | 无 | 清除选中人员；若当前为跟随模式，则切回手动模式。 |
 | `subscribe` / `unsubscribe` | `channels` 字符串数组 | 订阅或取消订阅遥测。有效通道是 `status`、`lidar`、`vision`、`navigation`。 |
 
 示例：
@@ -35,9 +37,12 @@ ros2 launch car_bringup bringup.launch.py use_app_bridge:=true
 {"id":"sub-1","cmd":"subscribe","channels":["status","lidar","vision","navigation"]}
 {"id":"move-1","cmd":"move","linear":0.15,"angular":0.0}
 {"id":"goal-1","cmd":"nav_goal","x":1.2,"y":-0.4,"yaw":1.57}
+{"id":"follow-1","cmd":"follow_person","track_id":7}
 ```
 
 订阅后，服务端会主动发送如 `{"type":"event","channel":"lidar","data":{...}}` 的事件。雷达事件包含避障覆盖和告警状态；视觉事件转发 `/vision/detections` 的结构化检测结果；`status` 中的 `command` 是安全仲裁后的 `/control/cmd_vel`，不是 APP 请求的原始速度。
+
+YOLO 人员事件中的 `track_id` 是本次相机跟踪会话内的 ID，APP 应显示它并将其传给 `follow_person`。距离安全状态在 `status.person_safety` 中：仅当深度图与彩色图对齐且新鲜时才会触发人员减速或停车。
 
 ## 兼容与扩展
 

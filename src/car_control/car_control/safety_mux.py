@@ -27,6 +27,8 @@ class SafetyMux(Node):
         self.declare_parameter('lidar_topic', '/cmd_vel_lidar')
         self.declare_parameter('follow_topic', '/cmd_vel_follow')
         self.declare_parameter('lidar_override_topic', '/lidar/override_active')
+        self.declare_parameter('person_slow_topic', '/vision/person_slow')
+        self.declare_parameter('person_estop_topic', '/vision/person_estop')
         self.declare_parameter('mode_topic', '/mode_select')
         self.declare_parameter('estop_topic', '/emergency_stop')
         self.declare_parameter('output_topic', '/control/cmd_vel')
@@ -35,10 +37,13 @@ class SafetyMux(Node):
         self.declare_parameter('publish_rate_hz', 20.0)
         self.declare_parameter('default_mode', 'manual')
         self.declare_parameter('allow_manual_escape_when_lidar_override', True)
+        self.declare_parameter('person_slow_max_linear_speed', 0.10)
 
         self.mode = str(self.get_parameter('default_mode').value)
         self.estop_active = False
         self.lidar_override_active = False
+        self.person_slow_active = False
+        self.person_estop_active = False
         self.manual = TimedTwist()
         self.nav = TimedTwist()
         self.vision = TimedTwist()
@@ -50,6 +55,9 @@ class SafetyMux(Node):
         self.allow_manual_escape = bool(
             self.get_parameter('allow_manual_escape_when_lidar_override').value
         )
+        self.person_slow_max_linear_speed = float(
+            self.get_parameter('person_slow_max_linear_speed').value
+        )
 
         self.publisher = self.create_publisher(Twist, str(self.get_parameter('output_topic').value), 10)
         self.create_subscription(Twist, str(self.get_parameter('manual_topic').value), self._on_manual, 10)
@@ -58,6 +66,8 @@ class SafetyMux(Node):
         self.create_subscription(Twist, str(self.get_parameter('lidar_topic').value), self._on_lidar, 10)
         self.create_subscription(Twist, str(self.get_parameter('follow_topic').value), self._on_follow, 10)
         self.create_subscription(Bool, str(self.get_parameter('lidar_override_topic').value), self._on_lidar_override, 10)
+        self.create_subscription(Bool, str(self.get_parameter('person_slow_topic').value), self._on_person_slow, 10)
+        self.create_subscription(Bool, str(self.get_parameter('person_estop_topic').value), self._on_person_estop, 10)
         self.create_subscription(String, str(self.get_parameter('mode_topic').value), self._on_mode, 10)
         self.create_subscription(Bool, str(self.get_parameter('estop_topic').value), self._on_estop, 10)
 
@@ -90,9 +100,15 @@ class SafetyMux(Node):
     def _on_lidar_override(self, msg: Bool) -> None:
         self.lidar_override_active = bool(msg.data)
 
+    def _on_person_slow(self, msg: Bool) -> None:
+        self.person_slow_active = bool(msg.data)
+
+    def _on_person_estop(self, msg: Bool) -> None:
+        self.person_estop_active = bool(msg.data)
+
     def _on_estop(self, msg: Bool) -> None:
         self.estop_active = bool(msg.data)
-        if self.estop_active:
+        if self.estop_active or self.person_estop_active:
             self.get_logger().warn('Emergency stop activated')
         else:
             self.get_logger().info('Emergency stop released')
@@ -107,14 +123,14 @@ class SafetyMux(Node):
         if self.lidar_override_active:
             manual_msg = self._fresh_message(self.manual, self.manual_timeout)
             if self.allow_manual_escape and self.mode == 'manual' and manual_msg is not None:
-                self.publisher.publish(self._block_forward_motion(manual_msg))
+                self.publisher.publish(self._apply_person_slow(self._block_forward_motion(manual_msg)))
                 return
-            self.publisher.publish(lidar_msg if lidar_msg is not None else msg)
+            self.publisher.publish(self._apply_person_slow(lidar_msg if lidar_msg is not None else msg))
             return
 
         selected = self._select_by_mode()
         if selected is not None:
-            self.publisher.publish(selected)
+            self.publisher.publish(self._apply_person_slow(selected))
             return
 
         self.publisher.publish(msg)
@@ -139,6 +155,21 @@ class SafetyMux(Node):
     def _block_forward_motion(msg: Twist) -> Twist:
         output = Twist()
         output.linear.x = min(0.0, msg.linear.x)
+        output.linear.y = msg.linear.y
+        output.linear.z = msg.linear.z
+        output.angular.x = msg.angular.x
+        output.angular.y = msg.angular.y
+        output.angular.z = msg.angular.z
+        return output
+
+    def _apply_person_slow(self, msg: Twist) -> Twist:
+        if not self.person_slow_active:
+            return msg
+        output = Twist()
+        output.linear.x = max(
+            -self.person_slow_max_linear_speed,
+            min(msg.linear.x, self.person_slow_max_linear_speed),
+        )
         output.linear.y = msg.linear.y
         output.linear.z = msg.linear.z
         output.angular.x = msg.angular.x

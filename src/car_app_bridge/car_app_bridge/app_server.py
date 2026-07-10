@@ -69,6 +69,8 @@ class AppServer(Node):
             'lidar_warning_active': False,
             'lidar_warning_state': 'unknown',
             'vision_detection': None,
+            'follow_target_id': None,
+            'person_safety': {'slow_active': False, 'estop_active': False},
             'command': {'linear': 0.0, 'angular': 0.0},
             'navigation': {'state': 'idle'},
         }
@@ -77,6 +79,9 @@ class AppServer(Node):
         self.mode_pub = self.create_publisher(String, self._parameter_topic('mode_topic'), 10)
         self.estop_pub = self.create_publisher(Bool, self._parameter_topic('estop_topic'), 10)
         self.goal_pub = self.create_publisher(PoseStamped, self._parameter_topic('goal_topic'), 10)
+        self.follow_target_pub = self.create_publisher(
+            String, self._parameter_topic('follow_target_topic'), 10
+        )
         self.status_pub = self.create_publisher(String, self._parameter_topic('status_topic'), 10)
         self.nav_client = ActionClient(
             self, NavigateToPose, str(self.get_parameter('navigation_action').value)
@@ -95,6 +100,12 @@ class AppServer(Node):
         )
         self.create_subscription(
             String, self._parameter_topic('vision_detection_topic'), self._on_vision_detection, 10
+        )
+        self.create_subscription(
+            Bool, self._parameter_topic('person_slow_topic'), self._on_person_slow, 10
+        )
+        self.create_subscription(
+            Bool, self._parameter_topic('person_estop_topic'), self._on_person_estop, 10
         )
         self.create_subscription(
             Twist, self._parameter_topic('control_output_topic'), self._on_control_output, 10
@@ -122,6 +133,9 @@ class AppServer(Node):
         self.declare_parameter('lidar_warning_topic', '/lidar/warning')
         self.declare_parameter('lidar_warning_state_topic', '/lidar/warning_state')
         self.declare_parameter('vision_detection_topic', '/vision/detections')
+        self.declare_parameter('follow_target_topic', '/vision/follow_target')
+        self.declare_parameter('person_slow_topic', '/vision/person_slow')
+        self.declare_parameter('person_estop_topic', '/vision/person_estop')
         self.declare_parameter('status_topic', '/app_bridge/status')
         self.declare_parameter('default_mode', 'manual')
         self.declare_parameter('linear_speed', 0.2)
@@ -299,6 +313,10 @@ class AppServer(Node):
             return self._set_navigation_goal(payload)
         if command == 'nav_cancel':
             return self._cancel_navigation_goal()
+        if command == 'follow_person':
+            return self._follow_person(payload)
+        if command == 'stop_follow':
+            return self._stop_follow()
         raise ProtocolError(f'unknown command: {command}')
 
     def _handle_legacy_text(self, session: ClientSession, line: str) -> None:
@@ -380,6 +398,32 @@ class AppServer(Node):
         self._broadcast('navigation', dict(self._state['navigation']))
         return dict(self._state['navigation'])
 
+    def _follow_person(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw_track_id = payload.get('track_id')
+        if isinstance(raw_track_id, bool):
+            raise ProtocolError('track_id must be a non-negative integer')
+        try:
+            track_id = int(raw_track_id)
+        except (TypeError, ValueError) as exc:
+            raise ProtocolError('track_id must be a non-negative integer') from exc
+        if track_id < 0 or str(track_id) != str(raw_track_id).strip():
+            raise ProtocolError('track_id must be a non-negative integer')
+        activate = boolean(payload.get('activate', True), 'activate')
+        self.follow_target_pub.publish(String(data=str(track_id)))
+        self._state['follow_target_id'] = track_id
+        if activate:
+            self._set_mode('follow')
+        self._broadcast('status', self._snapshot())
+        return {'track_id': track_id, 'mode': self._state['mode']}
+
+    def _stop_follow(self) -> Dict[str, Any]:
+        self.follow_target_pub.publish(String(data=''))
+        self._state['follow_target_id'] = None
+        if self._state['mode'] == 'follow':
+            self._set_mode('manual')
+        self._broadcast('status', self._snapshot())
+        return {'mode': self._state['mode']}
+
     def _on_nav_goal_response(self, future: Any) -> None:
         try:
             goal_handle = future.result()
@@ -433,6 +477,14 @@ class AppServer(Node):
         self._state['vision_detection'] = detection
         self._broadcast('vision', {'detection': detection})
 
+    def _on_person_slow(self, msg: Bool) -> None:
+        self._state['person_safety']['slow_active'] = bool(msg.data)
+        self._broadcast('status', self._snapshot())
+
+    def _on_person_estop(self, msg: Bool) -> None:
+        self._state['person_safety']['estop_active'] = bool(msg.data)
+        self._broadcast('status', self._snapshot())
+
     def _on_control_output(self, msg: Twist) -> None:
         self._state['command'] = {'linear': msg.linear.x, 'angular': msg.angular.z}
         self._broadcast('status', self._snapshot())
@@ -441,7 +493,7 @@ class AppServer(Node):
     def _capabilities(self) -> Dict[str, Any]:
         return {
             'protocol_version': PROTOCOL_VERSION,
-            'commands': ['ping', 'capabilities', 'status', 'subscribe', 'unsubscribe', 'move', 'mode', 'estop', 'nav_goal', 'nav_cancel'],
+            'commands': ['ping', 'capabilities', 'status', 'subscribe', 'unsubscribe', 'move', 'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'stop_follow'],
             'modes': sorted(VALID_MODES),
             'telemetry_channels': sorted(TELEMETRY_CHANNELS),
             'limits': {'max_linear_speed': self.max_linear_speed, 'max_angular_speed': self.max_angular_speed},
@@ -453,6 +505,8 @@ class AppServer(Node):
             'estop_active': self._state['estop_active'],
             'lidar': self._lidar_snapshot(),
             'vision_detection': self._state['vision_detection'],
+            'follow_target_id': self._state['follow_target_id'],
+            'person_safety': dict(self._state['person_safety']),
             'command': dict(self._state['command']),
             'navigation': dict(self._state['navigation']),
         }

@@ -15,6 +15,9 @@
     lidar_warning_topic: /lidar/warning
     lidar_warning_state_topic: /lidar/warning_state
     vision_detection_topic: /vision/detections
+    follow_target_topic: /vision/follow_target
+    person_slow_topic: /vision/person_slow
+    person_estop_topic: /vision/person_estop
     status_topic: /app_bridge/status
     default_mode: manual
     linear_speed: 0.2

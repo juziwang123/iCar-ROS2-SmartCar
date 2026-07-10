@@ -4,6 +4,10 @@
     depth_topic: /camera/depth/image_raw
     target_topic: /vision/color_target
     detection_topic: /vision/detections
+    follow_target_topic: /vision/follow_target
+    follow_output_topic: /cmd_vel_follow
+    person_slow_topic: /vision/person_slow
+    person_estop_topic: /vision/person_estop
     output_topic: /cmd_vel_vision
     mode_topic: /mode_select
     h_min: 0
@@ -29,3 +33,19 @@
     max_detections: 100
     # <= 0 means process every image. Keep this conservative on Jetson.
     inference_rate_hz: 8.0
+    person_labels: [person]
+    # Depth image must be registered/aligned with the colour image.
+    depth_timeout_sec: 0.5
+    depth_unit_scale: 0.001
+    depth_roi_ratio: 0.5
+    depth_min_m: 0.15
+    depth_max_m: 8.0
+    person_slow_distance_m: 1.2
+    person_estop_distance_m: 0.55
+    person_estop_confirm_frames: 2
+    follow_desired_distance_m: 1.0
+    follow_distance_tolerance_m: 0.15
+    follow_linear_gain: 0.45
+    follow_angular_gain: 0.8
+    follow_max_linear_speed: 0.18
+    follow_max_angular_speed: 0.7

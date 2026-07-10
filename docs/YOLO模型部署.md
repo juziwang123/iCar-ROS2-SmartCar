@@ -43,7 +43,7 @@ ros2 launch car_bringup bringup.launch.py \
   "model": "icar_best.pt",
   "image": {"width": 640, "height": 480},
   "detections": [
-    {"label": "person", "class_id": 0, "confidence": 0.93,
+    {"label": "person", "class_id": 0, "track_id": 7, "confidence": 0.93,
      "x_min": 100.0, "y_min": 40.0, "x_max": 280.0, "y_max": 420.0,
      "center_x": 190.0, "center_y": 230.0, "width": 180.0, "height": 380.0}
   ]
@@ -51,3 +51,13 @@ ros2 launch car_bringup bringup.launch.py \
 ```
 
 模型不存在、`ultralytics` 未安装或推理失败时，同一 topic 会发布空 `detections` 和 `error` 字段，APP 可据此显示诊断信息。
+
+## 人员安全与跟随
+
+YOLO 节点会在人员检测框的中心区域读取 `/camera/depth/image_raw` 的中位深度。深度图必须已与彩色图对齐；没有新鲜且尺寸一致的深度图时，系统不会依据 YOLO 自动限速、急停或向目标前进。
+
+- 人员距离小于等于 `person_slow_distance_m`（默认 1.2 m）时，`safety_mux` 将所有模式的前进速度限制在 `person_slow_max_linear_speed`（默认 0.10 m/s）。
+- 人员距离连续两帧小于等于 `person_estop_distance_m`（默认 0.55 m）时，`safety_mux` 输出零速度。该视觉急停独立于人工 `/emergency_stop`，不会错误释放人工急停。
+- APP 订阅 `vision` 后显示每个 `person` 的 `track_id`，发送 `{"cmd":"follow_person","track_id":7}` 即可选择人员并进入 `follow` 模式；`{"cmd":"stop_follow"}` 立即取消选择并回到手动模式。
+
+跟随控制发布到 `/cmd_vel_follow`，仍由 `safety_mux` 仲裁。运行 YOLO 人员跟随时不要同时启用激光雷达 `tracker`，因为两者会使用同一跟随控制话题。
