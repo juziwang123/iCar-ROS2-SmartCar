@@ -34,6 +34,7 @@ class SafetyMux(Node):
         self.declare_parameter('auto_timeout_sec', 0.6)
         self.declare_parameter('publish_rate_hz', 20.0)
         self.declare_parameter('default_mode', 'manual')
+        self.declare_parameter('allow_manual_escape_when_lidar_override', True)
 
         self.mode = str(self.get_parameter('default_mode').value)
         self.estop_active = False
@@ -46,6 +47,9 @@ class SafetyMux(Node):
 
         self.manual_timeout = Duration(seconds=float(self.get_parameter('manual_timeout_sec').value))
         self.auto_timeout = Duration(seconds=float(self.get_parameter('auto_timeout_sec').value))
+        self.allow_manual_escape = bool(
+            self.get_parameter('allow_manual_escape_when_lidar_override').value
+        )
 
         self.publisher = self.create_publisher(Twist, str(self.get_parameter('output_topic').value), 10)
         self.create_subscription(Twist, str(self.get_parameter('manual_topic').value), self._on_manual, 10)
@@ -100,8 +104,12 @@ class SafetyMux(Node):
             return
 
         lidar_msg = self._fresh_message(self.lidar, self.auto_timeout)
-        if self.lidar_override_active and lidar_msg is not None:
-            self.publisher.publish(lidar_msg)
+        if self.lidar_override_active:
+            manual_msg = self._fresh_message(self.manual, self.manual_timeout)
+            if self.allow_manual_escape and self.mode == 'manual' and manual_msg is not None:
+                self.publisher.publish(self._block_forward_motion(manual_msg))
+                return
+            self.publisher.publish(lidar_msg if lidar_msg is not None else msg)
             return
 
         selected = self._select_by_mode()
@@ -126,6 +134,17 @@ class SafetyMux(Node):
         if self.get_clock().now() - timed_twist.stamp > timeout:
             return None
         return timed_twist.msg
+
+    @staticmethod
+    def _block_forward_motion(msg: Twist) -> Twist:
+        output = Twist()
+        output.linear.x = min(0.0, msg.linear.x)
+        output.linear.y = msg.linear.y
+        output.linear.z = msg.linear.z
+        output.angular.x = msg.angular.x
+        output.angular.y = msg.angular.y
+        output.angular.z = msg.angular.z
+        return output
 
 
 def main(args=None) -> None:

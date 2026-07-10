@@ -13,6 +13,7 @@ class TrackerNode(Node):
         self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('output_topic', '/cmd_vel_follow')
         self.declare_parameter('follow_angle_deg', 35.0)
+        self.declare_parameter('front_center_deg', 180.0)
         self.declare_parameter('desired_distance', 0.8)
         self.declare_parameter('distance_tolerance', 0.1)
         self.declare_parameter('max_follow_distance', 2.0)
@@ -23,6 +24,8 @@ class TrackerNode(Node):
 
         self.output_topic = str(self.get_parameter('output_topic').value)
         self.follow_angle_deg = float(self.get_parameter('follow_angle_deg').value)
+        self.front_center_deg = float(self.get_parameter('front_center_deg').value)
+        self.front_center_rad = math.radians(self.front_center_deg)
         self.desired_distance = float(self.get_parameter('desired_distance').value)
         self.distance_tolerance = float(self.get_parameter('distance_tolerance').value)
         self.max_follow_distance = float(self.get_parameter('max_follow_distance').value)
@@ -38,7 +41,10 @@ class TrackerNode(Node):
             self._on_scan,
             10,
         )
-        self.get_logger().info('Lidar tracker started')
+        self.get_logger().info(
+            f'Lidar tracker started: front_center_deg={self.front_center_deg}, '
+            f'desired_distance={self.desired_distance}'
+        )
 
     def _on_scan(self, msg: LaserScan) -> None:
         target = self._find_target(msg)
@@ -62,8 +68,9 @@ class TrackerNode(Node):
             if math.isinf(distance) or math.isnan(distance):
                 angle += msg.angle_increment
                 continue
-            if msg.range_min < distance < min(msg.range_max, self.max_follow_distance) and abs(angle) <= half_window:
-                candidates.append((distance, angle))
+            relative_angle = self._angle_delta(angle, self.front_center_rad)
+            if msg.range_min < distance < min(msg.range_max, self.max_follow_distance) and abs(relative_angle) <= half_window:
+                candidates.append((distance, relative_angle))
             angle += msg.angle_increment
 
         if not candidates:
@@ -74,6 +81,13 @@ class TrackerNode(Node):
     def _clamp(value: float, limit: float) -> float:
         return max(-limit, min(limit, value))
 
+    @staticmethod
+    def _angle_delta(angle: float, center: float) -> float:
+        return math.atan2(math.sin(angle - center), math.cos(angle - center))
+
+    def stop(self) -> None:
+        self.publisher.publish(Twist())
+
 
 def main(args=None) -> None:
     rclpy.init(args=args)
@@ -83,5 +97,6 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        node.stop()
         node.destroy_node()
         rclpy.shutdown()

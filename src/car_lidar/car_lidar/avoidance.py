@@ -20,6 +20,9 @@ class AvoidanceNode(Node):
         self.declare_parameter('linear_speed', 0.15)
         self.declare_parameter('turn_speed', 0.6)
         self.declare_parameter('front_angle_deg', 25.0)
+        self.declare_parameter('front_center_deg', 180.0)
+        self.declare_parameter('allow_forward_in_slow_zone', False)
+        self.declare_parameter('turn_in_slow_zone', False)
         self.declare_parameter('publish_estop', False)
 
         self.output_topic = str(self.get_parameter('output_topic').value)
@@ -30,6 +33,10 @@ class AvoidanceNode(Node):
         self.linear_speed = float(self.get_parameter('linear_speed').value)
         self.turn_speed = float(self.get_parameter('turn_speed').value)
         self.front_angle_deg = float(self.get_parameter('front_angle_deg').value)
+        self.front_center_deg = float(self.get_parameter('front_center_deg').value)
+        self.front_center_rad = math.radians(self.front_center_deg)
+        self.allow_forward_in_slow_zone = bool(self.get_parameter('allow_forward_in_slow_zone').value)
+        self.turn_in_slow_zone = bool(self.get_parameter('turn_in_slow_zone').value)
         self.publish_estop = bool(self.get_parameter('publish_estop').value)
 
         self.cmd_publisher = self.create_publisher(Twist, self.output_topic, 10)
@@ -41,7 +48,10 @@ class AvoidanceNode(Node):
             self._on_scan,
             10,
         )
-        self.get_logger().info('Lidar avoidance started')
+        self.get_logger().info(
+            f'Lidar avoidance started: front_center_deg={self.front_center_deg}, '
+            f'front_distance_threshold={self.front_distance_threshold}'
+        )
 
     def _on_scan(self, msg: LaserScan) -> None:
         front_distance, left_distance, right_distance = self._extract_distances(msg)
@@ -54,12 +64,13 @@ class AvoidanceNode(Node):
 
         if front_distance < self.front_distance_threshold:
             override_active = True
-            command.angular.z = self.turn_speed if left_distance >= right_distance else -self.turn_speed
             estop = self.publish_estop
         elif front_distance < self.slow_distance_threshold:
             override_active = True
-            command.linear.x = self.linear_speed
-            command.angular.z = (self.turn_speed * 0.5) if left_distance >= right_distance else (-self.turn_speed * 0.5)
+            if self.allow_forward_in_slow_zone:
+                command.linear.x = self.linear_speed
+            if self.turn_in_slow_zone:
+                command.angular.z = (self.turn_speed * 0.5) if left_distance >= right_distance else (-self.turn_speed * 0.5)
 
         if override_active:
             self.cmd_publisher.publish(command)
@@ -79,11 +90,12 @@ class AvoidanceNode(Node):
                 angle += msg.angle_increment
                 continue
             if msg.range_min < distance < msg.range_max:
-                if abs(angle) <= half_window:
+                relative_angle = self._angle_delta(angle, self.front_center_rad)
+                if abs(relative_angle) <= half_window:
                     front_samples.append(distance)
-                elif 0.0 < angle <= math.pi / 2.0:
+                elif 0.0 < relative_angle <= math.pi / 2.0:
                     left_samples.append(distance)
-                elif -math.pi / 2.0 <= angle < 0.0:
+                elif -math.pi / 2.0 <= relative_angle < 0.0:
                     right_samples.append(distance)
             angle += msg.angle_increment
 
@@ -91,6 +103,10 @@ class AvoidanceNode(Node):
         left_distance = min(left_samples) if left_samples else float('inf')
         right_distance = min(right_samples) if right_samples else float('inf')
         return front_distance, left_distance, right_distance
+
+    @staticmethod
+    def _angle_delta(angle: float, center: float) -> float:
+        return math.atan2(math.sin(angle - center), math.cos(angle - center))
 
 
 def main(args=None) -> None:
