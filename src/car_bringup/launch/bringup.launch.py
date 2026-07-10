@@ -15,6 +15,8 @@ def generate_launch_description() -> LaunchDescription:
     use_color_detector = LaunchConfiguration('use_color_detector')
     use_color_tracker = LaunchConfiguration('use_color_tracker')
     use_yolo = LaunchConfiguration('use_yolo')
+    vision_yolo_model_path = LaunchConfiguration('vision_yolo_model_path')
+    vision_yolo_device = LaunchConfiguration('vision_yolo_device')
     use_app_bridge = LaunchConfiguration('use_app_bridge')
     app_bridge_host = LaunchConfiguration('app_bridge_host')
     app_bridge_port = LaunchConfiguration('app_bridge_port')
@@ -50,6 +52,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_color_detector', default_value='true'),
         DeclareLaunchArgument('use_color_tracker', default_value='false'),
         DeclareLaunchArgument('use_yolo', default_value='false'),
+        DeclareLaunchArgument('vision_yolo_model_path', default_value='models/model.pt'),
+        DeclareLaunchArgument('vision_yolo_device', default_value='auto'),
         DeclareLaunchArgument('use_app_bridge', default_value='false'),
         DeclareLaunchArgument('app_bridge_host', default_value='0.0.0.0'),
         DeclareLaunchArgument('app_bridge_port', default_value='8765'),
@@ -165,6 +169,8 @@ def generate_launch_description() -> LaunchDescription:
                 'use_color_detector': use_color_detector,
                 'use_color_tracker': use_color_tracker,
                 'use_yolo': use_yolo,
+                'yolo_model_path': vision_yolo_model_path,
+                'yolo_device': vision_yolo_device,
             }.items(),
             condition=IfCondition(use_vision),
         ),

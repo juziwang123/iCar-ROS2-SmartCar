@@ -1,0 +1,3 @@
+# Install on the Jetson after its CUDA-compatible PyTorch runtime is available.
+# The YOLO node imports this lazily, so color tracking can run without it.
+ultralytics>=8.0.0

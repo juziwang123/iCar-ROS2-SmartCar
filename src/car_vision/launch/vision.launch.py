@@ -11,11 +11,15 @@ def generate_launch_description() -> LaunchDescription:
     use_color_detector = LaunchConfiguration('use_color_detector')
     use_color_tracker = LaunchConfiguration('use_color_tracker')
     use_yolo = LaunchConfiguration('use_yolo')
+    yolo_model_path = LaunchConfiguration('yolo_model_path')
+    yolo_device = LaunchConfiguration('yolo_device')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_color_detector', default_value='true'),
         DeclareLaunchArgument('use_color_tracker', default_value='false'),
         DeclareLaunchArgument('use_yolo', default_value='false'),
+        DeclareLaunchArgument('yolo_model_path', default_value='models/model.pt'),
+        DeclareLaunchArgument('yolo_device', default_value='auto'),
         DeclareLaunchArgument(
             'params_file',
             default_value=PathJoinSubstitution([
@@ -44,7 +48,10 @@ def generate_launch_description() -> LaunchDescription:
             package='car_vision',
             executable='yolo_detector',
             name='yolo_detector',
-            parameters=[params_file],
+            parameters=[params_file, {
+                'model_path': yolo_model_path,
+                'device': yolo_device,
+            }],
             condition=IfCondition(use_yolo),
             output='screen',
         ),

@@ -20,5 +20,12 @@
     max_linear_speed: 0.18
     max_angular_speed: 0.8
     confidence_threshold: 0.45
-    model_path: ''
-    class_names_path: ''
+    # Place a local .pt model under src/car_vision/models/ (not committed),
+    # or override this parameter with an absolute model path at launch time.
+    model_path: models/model.pt
+    device: auto
+    iou_threshold: 0.45
+    image_size: 640
+    max_detections: 100
+    # <= 0 means process every image. Keep this conservative on Jetson.
+    inference_rate_hz: 8.0
