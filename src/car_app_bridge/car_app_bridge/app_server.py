@@ -65,6 +65,7 @@ class AppServer(Node):
         self._state: Dict[str, Any] = {
             'mode': str(self.get_parameter('default_mode').value),
             'estop_active': False,
+            'effective_estop_active': False,
             'lidar_override_active': False,
             'lidar_warning_active': False,
             'lidar_warning_state': 'unknown',
@@ -89,6 +90,9 @@ class AppServer(Node):
 
         self.create_subscription(String, self._parameter_topic('mode_topic'), self._on_mode, 10)
         self.create_subscription(Bool, self._parameter_topic('estop_topic'), self._on_estop, 10)
+        self.create_subscription(
+            Bool, self._parameter_topic('effective_estop_topic'), self._on_effective_estop, 10
+        )
         self.create_subscription(
             Bool, self._parameter_topic('lidar_override_topic'), self._on_lidar_override, 10
         )
@@ -125,6 +129,7 @@ class AppServer(Node):
         self.declare_parameter('manual_topic', '/cmd_vel_manual')
         self.declare_parameter('mode_topic', '/mode_select')
         self.declare_parameter('estop_topic', '/emergency_stop')
+        self.declare_parameter('effective_estop_topic', '/control/effective_estop')
         self.declare_parameter('goal_topic', '/goal_pose')
         self.declare_parameter('navigation_action', 'navigate_to_pose')
         self.declare_parameter('navigation_frame_id', 'map')
@@ -371,6 +376,10 @@ class AppServer(Node):
         frame_id = str(payload.get('frame_id', self.frame_id)).strip()
         if not frame_id:
             raise ProtocolError('frame_id must not be empty')
+        # Once Nav2 is routed through safety_mux, it must be the selected
+        # source or the safe default is a zero command. Switching here keeps
+        # APP single-goal navigation functional without bypassing the mux.
+        self._set_mode('nav')
         pose = PoseStamped()
         pose.header.frame_id = frame_id
         pose.header.stamp = self.get_clock().now().to_msg()
@@ -456,6 +465,10 @@ class AppServer(Node):
         self._state['estop_active'] = bool(msg.data)
         self._broadcast('status', self._snapshot())
 
+    def _on_effective_estop(self, msg: Bool) -> None:
+        self._state['effective_estop_active'] = bool(msg.data)
+        self._broadcast('status', self._snapshot())
+
     def _on_lidar_override(self, msg: Bool) -> None:
         self._state['lidar_override_active'] = bool(msg.data)
         self._broadcast('lidar', self._lidar_snapshot())
@@ -503,6 +516,7 @@ class AppServer(Node):
         return {
             'mode': self._state['mode'],
             'estop_active': self._state['estop_active'],
+            'effective_estop_active': self._state['effective_estop_active'],
             'lidar': self._lidar_snapshot(),
             'vision_detection': self._state['vision_detection'],
             'follow_target_id': self._state['follow_target_id'],

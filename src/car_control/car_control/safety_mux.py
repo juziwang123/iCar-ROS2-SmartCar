@@ -11,6 +11,8 @@ from rclpy.time import Time
 from std_msgs.msg import Bool
 from std_msgs.msg import String
 
+from .safety_policy import effective_estop, is_supported_mode, normalize_mode
+
 
 @dataclass
 class TimedTwist:
@@ -31,6 +33,7 @@ class SafetyMux(Node):
         self.declare_parameter('person_estop_topic', '/vision/person_estop')
         self.declare_parameter('mode_topic', '/mode_select')
         self.declare_parameter('estop_topic', '/emergency_stop')
+        self.declare_parameter('effective_estop_topic', '/control/effective_estop')
         self.declare_parameter('output_topic', '/control/cmd_vel')
         self.declare_parameter('manual_timeout_sec', 0.6)
         self.declare_parameter('auto_timeout_sec', 0.6)
@@ -39,8 +42,15 @@ class SafetyMux(Node):
         self.declare_parameter('allow_manual_escape_when_lidar_override', True)
         self.declare_parameter('person_slow_max_linear_speed', 0.10)
 
-        self.mode = str(self.get_parameter('default_mode').value)
-        self.estop_active = False
+        configured_mode = normalize_mode(self.get_parameter('default_mode').value)
+        self.mode = configured_mode if is_supported_mode(configured_mode) else 'manual'
+        if self.mode != configured_mode:
+            self.get_logger().error(
+                f'Unsupported default mode {configured_mode!r}; falling back to manual'
+            )
+        # This signal remains true after its publisher goes quiet. It is only
+        # released by an explicit Bool(data=False) message on estop_topic.
+        self.operator_estop_latched = False
         self.lidar_override_active = False
         self.person_slow_active = False
         self.person_estop_active = False
@@ -60,6 +70,9 @@ class SafetyMux(Node):
         )
 
         self.publisher = self.create_publisher(Twist, str(self.get_parameter('output_topic').value), 10)
+        self.effective_estop_publisher = self.create_publisher(
+            Bool, str(self.get_parameter('effective_estop_topic').value), 10
+        )
         self.create_subscription(Twist, str(self.get_parameter('manual_topic').value), self._on_manual, 10)
         self.create_subscription(Twist, str(self.get_parameter('nav_topic').value), self._on_nav, 10)
         self.create_subscription(Twist, str(self.get_parameter('vision_topic').value), self._on_vision, 10)
@@ -91,8 +104,9 @@ class SafetyMux(Node):
         self.follow = TimedTwist(msg=msg, stamp=self.get_clock().now())
 
     def _on_mode(self, msg: String) -> None:
-        mode = msg.data.strip()
-        if not mode:
+        mode = normalize_mode(msg.data)
+        if not is_supported_mode(mode):
+            self.get_logger().warn(f'Ignoring unsupported mode: {msg.data!r}')
             return
         self.mode = mode
         self.get_logger().info(f'Mode switched to {self.mode}')
@@ -104,18 +118,29 @@ class SafetyMux(Node):
         self.person_slow_active = bool(msg.data)
 
     def _on_person_estop(self, msg: Bool) -> None:
+        was_active = self.person_estop_active
         self.person_estop_active = bool(msg.data)
+        if self.person_estop_active and not was_active:
+            self.get_logger().warn('Person safety stop activated')
+        elif was_active and not self.person_estop_active:
+            self.get_logger().info('Person safety stop cleared')
 
     def _on_estop(self, msg: Bool) -> None:
-        self.estop_active = bool(msg.data)
-        if self.estop_active or self.person_estop_active:
+        was_latched = self.operator_estop_latched
+        self.operator_estop_latched = bool(msg.data)
+        if self.operator_estop_latched and not was_latched:
             self.get_logger().warn('Emergency stop activated')
-        else:
+        elif was_latched and not self.operator_estop_latched:
             self.get_logger().info('Emergency stop released')
 
     def _publish_selected_twist(self) -> None:
         msg = Twist()
-        if self.estop_active:
+        estop_active = effective_estop(
+            operator_latched=self.operator_estop_latched,
+            person_active=self.person_estop_active,
+        )
+        self.effective_estop_publisher.publish(Bool(data=estop_active))
+        if estop_active:
             self.publisher.publish(msg)
             return
 

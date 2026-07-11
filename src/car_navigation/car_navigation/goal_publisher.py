@@ -8,6 +8,7 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from std_msgs.msg import String
 
 
 class GoalPublisher(Node):
@@ -21,6 +22,8 @@ class GoalPublisher(Node):
         self.declare_parameter('send_on_start', True)
         self.declare_parameter('send_action_goal', True)
         self.declare_parameter('action_name', 'navigate_to_pose')
+        self.declare_parameter('mode_topic', '/mode_select')
+        self.declare_parameter('navigation_mode', 'nav')
 
         self.frame_id = str(self.get_parameter('frame_id').value)
         self.goal_topic = str(self.get_parameter('goal_topic').value)
@@ -29,9 +32,13 @@ class GoalPublisher(Node):
         action_name = str(self.get_parameter('action_name').value)
 
         self.publisher = self.create_publisher(PoseStamped, self.goal_topic, 10)
+        self.mode_publisher = self.create_publisher(
+            String, str(self.get_parameter('mode_topic').value), 10
+        )
         self.action_client = ActionClient(self, NavigateToPose, action_name)
         self._published_visual_goal = False
         self._action_goal_sent = False
+        self._navigation_mode_published = False
 
         if self.send_on_start:
             self.create_timer(0.5, self._send_once)
@@ -39,6 +46,11 @@ class GoalPublisher(Node):
     def _send_once(self) -> None:
         if self._action_goal_sent:
             return
+        if not self._navigation_mode_published:
+            mode = str(self.get_parameter('navigation_mode').value).strip().lower()
+            self.mode_publisher.publish(String(data=mode))
+            self._navigation_mode_published = True
+            self.get_logger().info(f'Selected {mode} control mode for navigation')
         goal = self._build_goal(
             float(self.get_parameter('x').value),
             float(self.get_parameter('y').value),

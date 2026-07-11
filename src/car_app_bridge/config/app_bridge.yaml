@@ -7,6 +7,7 @@
     manual_topic: /cmd_vel_manual
     mode_topic: /mode_select
     estop_topic: /emergency_stop
+    effective_estop_topic: /control/effective_estop
     goal_topic: /goal_pose
     navigation_action: navigate_to_pose
     navigation_frame_id: map

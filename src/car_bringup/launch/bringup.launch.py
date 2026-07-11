@@ -1,9 +1,38 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
+
+
+def _launch_boolean(value: str, name: str) -> bool:
+    normalized = value.strip().lower()
+    if normalized in {'1', 'true', 'yes', 'on'}:
+        return True
+    if normalized in {'0', 'false', 'no', 'off'}:
+        return False
+    raise RuntimeError(f'Launch argument {name} must be a boolean, got {value!r}')
+
+
+def _validate_operation_mode(context, *args, **kwargs):
+    """Reject combinations that start incompatible map/navigation systems."""
+    modes = {
+        'mapping': _launch_boolean(LaunchConfiguration('use_mapping').perform(context), 'use_mapping'),
+        'navigation': _launch_boolean(
+            LaunchConfiguration('use_navigation').perform(context), 'use_navigation'
+        ),
+        # Patrol includes navigation.launch.py itself, therefore it is a
+        # separate top-level mode instead of an add-on to use_navigation.
+        'patrol': _launch_boolean(LaunchConfiguration('use_patrol').perform(context), 'use_patrol'),
+    }
+    active = [name for name, enabled in modes.items() if enabled]
+    if len(active) > 1:
+        raise RuntimeError(
+            'Only one of use_mapping, use_navigation, or use_patrol may be true; '
+            f'got {", ".join(active)}'
+        )
+    return []
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -72,6 +101,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('navigation_goal_y', default_value='0.0'),
         DeclareLaunchArgument('navigation_goal_yaw', default_value='0.0'),
         DeclareLaunchArgument('navigation_send_goal', default_value='false'),
+        OpaqueFunction(function=_validate_operation_mode),
         DeclareLaunchArgument(
             'waypoints_file',
             default_value=PathJoinSubstitution([

@@ -36,9 +36,16 @@ class KeyboardTeleop(Node):
         self.declare_parameter('estop_topic', '/emergency_stop')
         self.declare_parameter('idle_stop_cycles', 4)
 
-        publish_topic = str(self.get_parameter('publish_topic').value)
+        publish_topic = str(self.get_parameter('publish_topic').value).strip()
+        if publish_topic == '/cmd_vel':
+            self.get_logger().error(
+                'publish_topic=/cmd_vel is unsafe and ignored; using /cmd_vel_manual instead'
+            )
+            publish_topic = '/cmd_vel_manual'
         if bool(self.get_parameter('direct_cmd_vel').value):
-            publish_topic = '/cmd_vel'
+            self.get_logger().error(
+                'direct_cmd_vel is unsafe and ignored; keyboard commands stay behind safety_mux'
+            )
 
         self.linear_speed = float(self.get_parameter('linear_speed').value)
         self.angular_speed = float(self.get_parameter('angular_speed').value)

@@ -21,7 +21,7 @@ ros2 launch car_bringup bringup.launch.py use_app_bridge:=true
 | `cmd` | 请求数据 | 小车接口 |
 | --- | --- | --- |
 | `capabilities` | 无 | 查询协议版本、功能、模式、遥测通道、速度限制；APP 应用它构建兼容界面。 |
-| `ping` / `status` | 无 | 连通性检查 / 当前模式、急停、雷达、视觉、输出速度、导航状态。 |
+| `ping` / `status` | 无 | 连通性检查 / 当前模式、原始急停、实际生效急停、雷达、视觉、输出速度、导航状态。 |
 | `move` | `linear`, `angular` | 手动速度，发布到 `/cmd_vel_manual`，经过安全仲裁；超过 YAML 上限会被拒绝。 |
 | `mode` | `value`: `manual`、`nav`、`vision`、`follow` | 发布 `/mode_select`。 |
 | `estop` | `active`: 布尔值 | 发布 `/emergency_stop`。`false` 释放急停。 |
@@ -40,7 +40,7 @@ ros2 launch car_bringup bringup.launch.py use_app_bridge:=true
 {"id":"follow-1","cmd":"follow_person","track_id":7}
 ```
 
-订阅后，服务端会主动发送如 `{"type":"event","channel":"lidar","data":{...}}` 的事件。雷达事件包含避障覆盖和告警状态；视觉事件转发 `/vision/detections` 的结构化检测结果；`status` 中的 `command` 是安全仲裁后的 `/control/cmd_vel`，不是 APP 请求的原始速度。
+订阅后，服务端会主动发送如 `{"type":"event","channel":"lidar","data":{...}}` 的事件。雷达事件包含避障覆盖和告警状态；视觉事件转发 `/vision/detections` 的结构化检测结果；`status` 中的 `command` 是安全仲裁后的 `/control/cmd_vel`，不是 APP 请求的原始速度。`estop_active` 是 APP/键盘急停话题的原始状态，`effective_estop_active` 是控制仲裁实际执行的停车状态，包含人员近距离停车。
 
 YOLO 人员事件中的 `track_id` 是本次相机跟踪会话内的 ID，APP 应显示它并将其传给 `follow_person`。距离安全状态在 `status.person_safety` 中：仅当深度图与彩色图对齐且新鲜时才会触发人员减速或停车。
 

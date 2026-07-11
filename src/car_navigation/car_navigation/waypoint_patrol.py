@@ -10,6 +10,7 @@ from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from std_msgs.msg import String
 
 
 class WaypointPatrol(Node):
@@ -21,11 +22,16 @@ class WaypointPatrol(Node):
         self.declare_parameter('waypoints_file', '')
         self.declare_parameter('loop', True)
         self.declare_parameter('autoload', True)
+        self.declare_parameter('mode_topic', '/mode_select')
+        self.declare_parameter('navigation_mode', 'nav')
 
         self.frame_id = str(self.get_parameter('frame_id').value)
         self.goal_topic = str(self.get_parameter('goal_topic').value)
         self.loop = bool(self.get_parameter('loop').value)
         self.publisher = self.create_publisher(PoseStamped, self.goal_topic, 10)
+        self.mode_publisher = self.create_publisher(
+            String, str(self.get_parameter('mode_topic').value), 10
+        )
         self.action_client = ActionClient(
             self,
             NavigateToPose,
@@ -54,6 +60,9 @@ class WaypointPatrol(Node):
             return
         if not self.action_client.wait_for_server(timeout_sec=1.0):
             return
+        navigation_mode = str(self.get_parameter('navigation_mode').value).strip().lower()
+        self.mode_publisher.publish(String(data=navigation_mode))
+        self.get_logger().info(f'Selected {navigation_mode} control mode for waypoint patrol')
         self._started = True
         self._send_current_goal()
 

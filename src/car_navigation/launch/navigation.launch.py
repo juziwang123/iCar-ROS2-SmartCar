@@ -1,9 +1,9 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -45,21 +45,29 @@ def generate_launch_description() -> LaunchDescription:
             description='Path to Nav2 parameters for the real car.',
         ),
 
-        # Nav2 bringup with our map
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                PathJoinSubstitution([
-                    FindPackageShare('nav2_bringup'),
-                    'launch',
-                    'bringup_launch.py',
-                ])
-            ),
-            launch_arguments={
-                'map': map_file,
-                'use_sim_time': use_sim_time,
-                'params_file': params_file,
-                'autostart': autostart,
-            }.items(),
+        # Nav2 must never publish directly to the base driver. Scope the
+        # remap to Nav2 so every autonomous velocity is arbitrated by
+        # car_control/safety_mux before motion_controller publishes /cmd_vel.
+        GroupAction(
+            scoped=True,
+            actions=[
+                SetRemap(src='/cmd_vel', dst='/cmd_vel_nav'),
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(
+                        PathJoinSubstitution([
+                            FindPackageShare('nav2_bringup'),
+                            'launch',
+                            'bringup_launch.py',
+                        ])
+                    ),
+                    launch_arguments={
+                        'map': map_file,
+                        'use_sim_time': use_sim_time,
+                        'params_file': params_file,
+                        'autostart': autostart,
+                    }.items(),
+                ),
+            ],
         ),
 
         # Optional RViz

@@ -7,9 +7,9 @@
     allow_manual_escape_when_lidar_override: true
     person_slow_topic: /vision/person_slow
     person_estop_topic: /vision/person_estop
+    effective_estop_topic: /control/effective_estop
     person_slow_max_linear_speed: 0.10
     repeat_rate_hz: 20.0
-    direct_cmd_vel: false
     idle_stop_cycles: 4
     follow_topic: /cmd_vel_follow
     linear_speed: 0.25
