@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>car_map_manager</name>
+  <version>0.1.0</version>
+  <description>Managed map metadata, storage, and route-to-map validation for iCar.</description>
+  <maintainer email="team@example.com">iCar Team</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>python3-yaml</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

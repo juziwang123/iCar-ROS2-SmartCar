@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 VALID_MODES = frozenset({'manual', 'nav', 'vision', 'follow'})
-TELEMETRY_CHANNELS = frozenset({'status', 'lidar', 'vision', 'navigation'})
+TELEMETRY_CHANNELS = frozenset({
+    'status', 'lidar', 'vision', 'navigation', 'pose', 'mission', 'event', 'control_lease',
+})
 
 
 class ProtocolError(ValueError):
@@ -73,7 +75,25 @@ def boolean(value: Any, field: str = 'value') -> bool:
     raise ProtocolError(f'{field} must be a boolean')
 
 
-def string_list(value: Any, field: str) -> list[str]:
+def string_list(value: Any, field: str) -> List[str]:
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         raise ProtocolError(f'{field} must be an array of strings')
+    return value
+
+
+def object_value(value: Any, field: str) -> Dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProtocolError(f'{field} must be an object')
+    return value
+
+
+def nonempty_string(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ProtocolError(f'{field} must be a non-empty string')
+    return value.strip()
+
+
+def nonnegative_integer(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ProtocolError(f'{field} must be a non-negative integer')
     return value

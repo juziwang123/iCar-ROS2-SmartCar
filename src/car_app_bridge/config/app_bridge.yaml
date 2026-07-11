@@ -11,6 +11,7 @@
     goal_topic: /goal_pose
     navigation_action: navigate_to_pose
     navigation_frame_id: map
+    initial_pose_topic: /initialpose
     control_output_topic: /control/cmd_vel
     lidar_override_topic: /lidar/override_active
     lidar_warning_topic: /lidar/warning
@@ -20,6 +21,21 @@
     person_slow_topic: /vision/person_slow
     person_estop_topic: /vision/person_estop
     status_topic: /app_bridge/status
+    robot_pose_topic: /amcl_pose
+    mission_status_topic: /mission/status
+    mission_event_topic: /mission/event
+    mission_action: execute_patrol
+    mission_control_service: /mission/control
+    maps_root: ~/.icar/maps
+    route_database_path: ~/.icar/icar.db
+    map_saver_service: /map_saver/save_map
+    map_topic: /map
+    map_image_format: pgm
+    map_mode: trinary
+    map_free_thresh: 0.25
+    map_occupied_thresh: 0.65
+    service_call_timeout_sec: 10.0
+    control_lease_timeout_sec: 1.0
     default_mode: manual
     linear_speed: 0.2
     angular_speed: 0.7

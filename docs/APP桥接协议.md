@@ -1,51 +1,174 @@
-# APP TCP 桥接协议（v1）
+# APP 车端桥接协议（v2）
 
-`car_app_bridge` 在 TCP `8765` 端口提供小车的受控访问接口。协议是 **JSON Lines**：每一行是一条 UTF-8 JSON 对象，服务端也以一行 JSON 响应或推送事件。它不开放任意 ROS topic，以确保 APP 仍然经过 `safety_mux`、速度上限和急停链路。
+`car_app_bridge` 是车端的受控接口层。APP 不属于本仓库的交付范围；APP 只需按本文通过 TCP JSON Lines 调用接口、订阅状态并渲染界面。APP 不得直接发布 ROS topic，也不得直接访问底盘、`/cmd_vel` 或 Nav2 action。
 
-## 启动与安全
+## 1. 连接与报文
 
-```bash
-ros2 launch car_bringup bringup.launch.py use_app_bridge:=true
-```
+- 默认监听：`0.0.0.0:8765`，参数见 [app_bridge.yaml](../src/car_app_bridge/config/app_bridge.yaml)。
+- 编码：UTF-8；每行一个完整 JSON 对象，以 `\n` 结束；单行最大 8192 字节。
+- 服务端连接后先发送：`{"type":"hello","protocol_version":2,"authentication_required":false}`。
+- 请求格式：`{"id":"客户端请求 ID","cmd":"命令名", ...}`。`id` 可选，但 APP 应始终填写并按它关联异步响应。
+- 成功响应：`{"type":"response","ok":true,"cmd":"...","id":"...","data":{...}}`。
+- 失败响应：`{"type":"response","ok":false,"cmd":"...","id":"...","error":"可读错误信息"}`。
+- 主动遥测：`{"type":"event","channel":"...","data":{...}}`。同一 TCP 连接上的响应与事件可交错到达。
 
-默认监听全部网卡。部署到非隔离网络时，必须将 `src/car_app_bridge/config/app_bridge.yaml` 的 `auth_token` 设为随机、非空值，并限制防火墙访问来源。客户端连接后先收到 `hello`；配置令牌时，先发送：
+设置了非空 `auth_token` 时，除 `auth` 外的 JSON 请求都会被拒绝：
 
 ```json
 {"id":"auth-1","cmd":"auth","token":"<auth_token>"}
 ```
 
-每个正常响应都有相同外层结构：`{"type":"response","ok":true,"cmd":"...","id":"...","data":{...}}`。失败时 `ok` 为 `false` 并带有 `error`。APP 应以 `id` 对应请求和响应，不应依赖响应到达顺序。
+生产部署必须设置随机且非空的 `auth_token`，并使用防火墙限制可访问该端口的网段；此 TCP 协议不应直接暴露到互联网。
 
-## 指令
+## 2. 能力查询与遥测
 
-| `cmd` | 请求数据 | 小车接口 |
+APP 首次连接应调用 `capabilities`，以服务端返回的版本、命令、模式、遥测通道和速度限制为准。当前支持的遥测通道如下：
+
+| 通道 | 内容 | 建议用途 |
 | --- | --- | --- |
-| `capabilities` | 无 | 查询协议版本、功能、模式、遥测通道、速度限制；APP 应用它构建兼容界面。 |
-| `ping` / `status` | 无 | 连通性检查 / 当前模式、原始急停、实际生效急停、雷达、视觉、输出速度、导航状态。 |
-| `move` | `linear`, `angular` | 手动速度，发布到 `/cmd_vel_manual`，经过安全仲裁；超过 YAML 上限会被拒绝。 |
-| `mode` | `value`: `manual`、`nav`、`vision`、`follow` | 发布 `/mode_select`。 |
-| `estop` | `active`: 布尔值 | 发布 `/emergency_stop`。`false` 释放急停。 |
-| `nav_goal` | `x`, `y`, 可选 `yaw`、`frame_id` | 发布 `/goal_pose`；若 Nav2 action server 已就绪，也发送 `NavigateToPose`。 |
-| `nav_cancel` | 无 | 取消由 APP 桥接提交且已接受的导航目标。 |
-| `follow_person` | `track_id`，可选 `activate` | 选择 YOLO 事件中对应的人员 ID；默认切换到 `follow` 模式。 |
-| `stop_follow` | 无 | 清除选中人员；若当前为跟随模式，则切回手动模式。 |
-| `subscribe` / `unsubscribe` | `channels` 字符串数组 | 订阅或取消订阅遥测。有效通道是 `status`、`lidar`、`vision`、`navigation`。 |
+| `status` | 当前模式、急停、雷达/人身安全、控制输出、导航、位姿、任务、控制租约摘要 | 总览页与安全状态 |
+| `lidar` | 避障覆盖、告警状态 | 障碍提示 |
+| `vision` | `/vision/detections` 的结构化结果 | 视觉巡检/跟随结果 |
+| `navigation` | 直接导航目标的接收、完成、失败状态 | 单点导航页 |
+| `pose` | AMCL 位姿、协方差摘要 | 地图上的小车位置 |
+| `mission` | 巡检任务进度 | 任务详情页 |
+| `event` | 巡检状态转换和业务事件 | 任务事件流/审计 |
+| `control_lease` | 手动控制租约的持有和失效 | 遥控控制权提示 |
 
-示例：
+订阅示例：
 
 ```json
-{"id":"sub-1","cmd":"subscribe","channels":["status","lidar","vision","navigation"]}
-{"id":"move-1","cmd":"move","linear":0.15,"angular":0.0}
-{"id":"goal-1","cmd":"nav_goal","x":1.2,"y":-0.4,"yaw":1.57}
-{"id":"follow-1","cmd":"follow_person","track_id":7}
+{"id":"sub-1","cmd":"subscribe","channels":["status","pose","mission","event","control_lease"]}
 ```
 
-订阅后，服务端会主动发送如 `{"type":"event","channel":"lidar","data":{...}}` 的事件。雷达事件包含避障覆盖和告警状态；视觉事件转发 `/vision/detections` 的结构化检测结果；`status` 中的 `command` 是安全仲裁后的 `/control/cmd_vel`，不是 APP 请求的原始速度。`estop_active` 是 APP/键盘急停话题的原始状态，`effective_estop_active` 是控制仲裁实际执行的停车状态，包含人员近距离停车。
+取消订阅使用同样格式的 `unsubscribe`。`status` 中的 `command` 是安全仲裁后的 `/control/cmd_vel`，并非 APP 原始输入；`effective_estop_active` 才是实际生效的停车状态，包含人员近距急停等来源。
 
-YOLO 人员事件中的 `track_id` 是本次相机跟踪会话内的 ID，APP 应显示它并将其传给 `follow_person`。距离安全状态在 `status.person_safety` 中：仅当深度图与彩色图对齐且新鲜时才会触发人员减速或停车。
+## 3. 手动接管与安全边界
 
-## 兼容与扩展
+手动运动使用单客户端租约，默认有效期 1 秒。这样可以防止两个 APP/控制台同时向小车发速度命令。
 
-旧的文本指令（`forward`、`back`、`left`、`right`、`stop`、`mode manual`、`estop off`）仍可使用；启用 `auth_token` 后仅允许 JSON 认证和指令。
+1. 获取控制权：`{"id":"lease-1","cmd":"teleop_acquire"}`；响应包含 `lease_id` 和 `expires_in_sec`。
+2. 使用该 `lease_id` 调用 `move`，每次 `move` 也会续期：
 
-新增小车功能时，应在 `AppServer._dispatch()` 添加一个明确命名的命令、在 `_capabilities()` 中声明它、通过固定 ROS 接口实现，并为状态创建一个遥测通道或并入 `status`。不要让 APP 直接指定 topic、消息类型或任意参数：这会绕开控制仲裁和速度/权限校验。相机实时视频应使用专门的 WebRTC/MJPEG 视频服务；本 TCP 控制端口只承载控制与轻量状态，避免图像流阻塞急停和操控指令。
+   ```json
+   {"id":"move-1","cmd":"move","lease_id":"<lease_id>","linear":0.15,"angular":0.0}
+   ```
+
+3. 在操纵杆静止时，APP 应每 300–500 ms 调用 `teleop_heartbeat`；结束时调用 `teleop_release`。
+4. 客户端断线、主动释放或超时后，车端立即向 `/cmd_vel_manual` 发布零速度，并广播 `control_lease` 事件。
+
+`linear` 和 `angular` 必须是有限数，绝对值不得超过服务端 `capabilities.limits`。旧文本 `forward/back/left/right` 已禁止；`stop` 仅保留为兼容性零速度命令，新的 APP 应使用带租约的 `move`。
+
+`mode` 接受 `manual`、`nav`、`vision`、`follow`；`estop` 接受布尔字段 `active`。APP 可中途接管，但应先调用 `mission_pause` 并等待 `mission.state=PAUSED`（直接导航则先 `nav_cancel`）；此后 `teleop_acquire` 才会成功，并由车端切换到 `manual`。释放/超时后车端保持零速度和手动模式，必须显式 `mission_resume` 才能恢复自动运动。急停和 `safety_mux` 始终拥有更高优先级。
+
+## 4. 地图接口
+
+地图由 SLAM 建图阶段产生。以如下方式启动建图和桥接服务：
+
+```bash
+ros2 launch car_bringup bringup.launch.py \
+  use_mapping:=true use_app_bridge:=true mapping_use_map_saver:=true
+```
+
+建图启动时会运行 Nav2 `map_saver_server`，服务名默认 `/map_saver/save_map`。保存成功后，车端在 `~/.icar/maps/<map_id>/` 管理 `map.yaml`、PGM 图像和 `manifest.json`；路线接口只使用 `map_id`，不接受任意文件路径。
+
+| 命令 | 请求字段 | 成功数据 | 说明 |
+| --- | --- | --- | --- |
+| `map_list` | 无 | `maps` | 返回所有已注册地图的 manifest 摘要 |
+| `map_get` | `map_id` | `map` | 返回一个 manifest，不传输 PGM 图像内容 |
+| `map_save` | `name` | `saved`, `map` | 调用车端 map saver；仅建图模式且服务处于可用状态时可用 |
+| `initial_pose` | `map_id`, `x`, `y`, 可选 `yaw` | 位姿回显 | 向 `/initialpose` 发布 AMCL 初始位姿；APP 必须先在导航端加载同一地图 |
+
+`map_save` 示例：
+
+```json
+{"id":"map-save-1","cmd":"map_save","name":"warehouse_floor_1"}
+```
+
+manifest 至少包含 `map_id`、`name`、`resolution`、`origin`、`width`、`height`、地图文件名与 SHA-256。地图文件下载/展示不是本 TCP 控制协议的职责；若 APP 需要地图底图，应通过部署侧受鉴权的文件服务或静态资源服务提供只读副本，并按 manifest 中的哈希校验。
+
+## 5. 路线协议
+
+路线是版本化 JSON 对象。保存前车端会同时完成结构校验和静态栅格校验：每个节点必须在该地图范围内，且不能落在占用格或未知格。`valid=true` 仅代表静态检查通过；动态障碍、代价地图膨胀、定位质量和实际 Nav2 可达性仍由运行时导航决定。
+
+| 命令 | 请求字段 | 说明 |
+| --- | --- | --- |
+| `route_list` | 可选 `map_id` | 返回路线 ID、版本、地图、名称、循环标志和更新时间 |
+| `route_get` | `route_id`，可选 `version` | `version` 缺省或为 `0` 时取最新版本 |
+| `route_validate` | `route` | 只校验，不写数据库 |
+| `route_save` | `route`，可选 `replace` | 校验通过后写入 SQLite；同一 ID/版本默认不可覆盖 |
+| `route_delete` | `route_id`，可选 `version` | 不给版本时删除该路线的所有版本 |
+
+路线最小示例：
+
+```json
+{
+  "id":"route-check-1",
+  "cmd":"route_validate",
+  "route":{
+    "schema_version":1,
+    "route_id":"warehouse_a_day",
+    "map_id":"warehouse_floor_1_20260711_120000_ab12cd34",
+    "name":"仓库 A 白天巡检",
+    "version":1,
+    "loop":false,
+    "checkpoints":[
+      {
+        "checkpoint_id":"door-01",
+        "sequence":1,
+        "name":"一号门",
+        "type":"checkin",
+        "pose":{"frame_id":"map","x":1.20,"y":-0.40,"yaw":1.57},
+        "arrival":{"position_tolerance_m":0.30,"yaw_tolerance_rad":0.35,"dwell_sec":1.0},
+        "tasks":[],
+        "failure_policy":{"navigation":"retry_then_wait_operator"}
+      }
+    ]
+  }
+}
+```
+
+限制：`schema_version` 当前必须为 1；`route_id`、`map_id`、`checkpoint_id` 不可为空或包含空白；节点 `sequence` 从 1 连续递增；坐标系必须为 `map`；版本为正整数。`tasks` 已作为节点扩展字段持久化，P3 将由巡检任务执行器定义其具体类型与结果协议。
+
+## 6. 巡检任务接口
+
+车端以 `ExecutePatrol` action 执行路线，以 `/mission/control` 服务实施暂停、继续、取消。TCP 桥将它们封装为以下命令：
+
+| 命令 | 请求字段 | 说明 |
+| --- | --- | --- |
+| `mission_start` | `route_id`、可选 `route_version`（0=最新）、`start_checkpoint_index`、`loop` | 启动巡检；运行中的巡检或直接导航目标会被拒绝，避免两个 Nav2 客户端争抢路线 |
+| `mission_pause` | `mission_id` | 请求暂停 |
+| `mission_resume` | `mission_id` | 请求继续 |
+| `mission_cancel` | `mission_id` | 请求取消 |
+
+启动示例：
+
+```json
+{"id":"mission-1","cmd":"mission_start","route_id":"warehouse_a_day","route_version":1,"start_checkpoint_index":0,"loop":false}
+```
+
+`mission_start` 的即时响应仅表示 action 已提交，最终是否被接受和执行进度请订阅 `mission`。任务状态中包含 `mission_id`、路线版本、当前节点、节点总数、进度、重试次数和详情；`event` 记录状态迁移和可审计事件。直接导航 `nav_goal` 与巡检互斥；巡检期间应使用上述任务命令，不应发送 `nav_goal`。
+
+## 7. 直接导航和视觉跟随
+
+| 命令 | 请求字段 | 说明 |
+| --- | --- | --- |
+| `nav_goal` | `x`, `y`，可选 `yaw`、`frame_id` | 发送单点 Nav2 目标，并自动选择 `nav` 模式；巡检运行时会拒绝 |
+| `nav_cancel` | 无 | 取消由此桥接提交的已接受单点导航目标 |
+| `follow_person` | `track_id`，可选 `activate` | 选择视觉跟踪 ID，默认切到 `follow` 模式 |
+| `stop_follow` | 无 | 清空跟随目标；当前为跟随模式时切回 `manual` |
+
+视觉跟踪 ID 只在本次相机跟踪会话内有效。`status.person_safety` 的减速/急停结果仅在深度和彩色数据时序有效时生效；APP 只能展示并请求操作，不能绕过这条安全链路。
+
+## 8. ROS 接口对应关系（供部署和联调）
+
+| TCP 能力 | 车端 ROS 接口 |
+| --- | --- |
+| 地图保存 | `nav2_msgs/srv/SaveMap`，默认 `/map_saver/save_map` |
+| 初始位姿 / 位姿遥测 | `/initialpose` / `/amcl_pose`（`PoseWithCovarianceStamped`） |
+| 路线存储 | `~/.icar/icar.db`，由 `car_mission` 管理 |
+| 巡检 | `car_interfaces/action/ExecutePatrol`、`car_interfaces/srv/MissionControl`、`/mission/status`、`/mission/event` |
+| 手动控制 | `/cmd_vel_manual`，最终由 `safety_mux` 输出 `/control/cmd_vel` |
+| 急停 | `/emergency_stop`，实际生效状态为 `/control/effective_estop` |
+
+部署前应执行 `ros2 interface show nav2_msgs/srv/SaveMap`、`ros2 action info /execute_patrol` 和 `ros2 service type /mission/control`，确认目标 Jetson 上的 Nav2/Foxy 接口与本工程依赖一致。完整场景、分期和验收标准见 [复杂巡检场景详细实施方案.md](复杂巡检场景详细实施方案.md)。

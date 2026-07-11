@@ -9,12 +9,16 @@
   <buildtool_depend>ament_python</buildtool_depend>
 
   <depend>geometry_msgs</depend>
+  <depend>car_interfaces</depend>
+  <depend>car_map_manager</depend>
+  <depend>car_mission</depend>
   <depend>nav2_msgs</depend>
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>

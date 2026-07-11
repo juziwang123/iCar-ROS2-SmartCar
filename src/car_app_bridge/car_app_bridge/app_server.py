@@ -11,16 +11,26 @@ import json
 import math
 import socket
 import threading
+import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Sequence, Set
 
 import rclpy
-from geometry_msgs.msg import PoseStamped, Twist
+from car_interfaces.action import ExecutePatrol
+from car_interfaces.msg import MissionStatus, PatrolEvent
+from car_interfaces.srv import MissionControl
+from car_map_manager.map_repository import MapNotFoundError, MapRepository, MapRepositoryError
+from car_mission.route_repository import RouteNotFoundError, RouteRepository
+from car_mission.route_schema import RouteValidationError, parse_route, route_to_mapping
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.srv import SaveMap
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
+from .control_lease import ControlLeaseManager, LeaseError
 from .protocol import (
     PROTOCOL_VERSION,
     TELEMETRY_CHANNELS,
@@ -29,6 +39,9 @@ from .protocol import (
     boolean,
     event,
     finite_number,
+    nonempty_string,
+    nonnegative_integer,
+    object_value,
     response,
     string_list,
 )
@@ -39,6 +52,7 @@ class ClientSession:
     socket: socket.socket
     address: Any
     authenticated: bool
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     subscriptions: Set[str] = field(default_factory=set)
     send_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -56,12 +70,20 @@ class AppServer(Node):
         self.max_line_bytes = int(self.get_parameter('max_line_bytes').value)
         self.auth_token = str(self.get_parameter('auth_token').value)
         self.frame_id = str(self.get_parameter('navigation_frame_id').value)
+        self.service_call_timeout_sec = float(self.get_parameter('service_call_timeout_sec').value)
+        self.map_repository = MapRepository(str(self.get_parameter('maps_root').value))
+        self.route_repository = RouteRepository(str(self.get_parameter('route_database_path').value))
+        self._control_lease = ControlLeaseManager(
+            float(self.get_parameter('control_lease_timeout_sec').value)
+        )
+        self._lease_lock = threading.Lock()
 
         self._stop_event = threading.Event()
         self._server: Optional[socket.socket] = None
         self._sessions: Set[ClientSession] = set()
         self._sessions_lock = threading.Lock()
         self._app_goal_handle = None
+        self._mission_goal_handle = None
         self._state: Dict[str, Any] = {
             'mode': str(self.get_parameter('default_mode').value),
             'estop_active': False,
@@ -74,18 +96,32 @@ class AppServer(Node):
             'person_safety': {'slow_active': False, 'estop_active': False},
             'command': {'linear': 0.0, 'angular': 0.0},
             'navigation': {'state': 'idle'},
+            'pose': None,
+            'mission': {'state': 'idle'},
         }
 
         self.cmd_pub = self.create_publisher(Twist, self._parameter_topic('manual_topic'), 10)
         self.mode_pub = self.create_publisher(String, self._parameter_topic('mode_topic'), 10)
         self.estop_pub = self.create_publisher(Bool, self._parameter_topic('estop_topic'), 10)
         self.goal_pub = self.create_publisher(PoseStamped, self._parameter_topic('goal_topic'), 10)
+        self.initial_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, self._parameter_topic('initial_pose_topic'), 10
+        )
         self.follow_target_pub = self.create_publisher(
             String, self._parameter_topic('follow_target_topic'), 10
         )
         self.status_pub = self.create_publisher(String, self._parameter_topic('status_topic'), 10)
         self.nav_client = ActionClient(
             self, NavigateToPose, str(self.get_parameter('navigation_action').value)
+        )
+        self.map_saver_client = self.create_client(
+            SaveMap, self._parameter_topic('map_saver_service')
+        )
+        self.mission_client = ActionClient(
+            self, ExecutePatrol, self._parameter_topic('mission_action')
+        )
+        self.mission_control_client = self.create_client(
+            MissionControl, self._parameter_topic('mission_control_service')
         )
 
         self.create_subscription(String, self._parameter_topic('mode_topic'), self._on_mode, 10)
@@ -114,6 +150,16 @@ class AppServer(Node):
         self.create_subscription(
             Twist, self._parameter_topic('control_output_topic'), self._on_control_output, 10
         )
+        self.create_subscription(
+            PoseWithCovarianceStamped, self._parameter_topic('robot_pose_topic'), self._on_robot_pose, 10
+        )
+        self.create_subscription(
+            MissionStatus, self._parameter_topic('mission_status_topic'), self._on_mission_status, 10
+        )
+        self.create_subscription(
+            PatrolEvent, self._parameter_topic('mission_event_topic'), self._on_mission_event, 10
+        )
+        self.create_timer(0.1, self._expire_control_lease)
 
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -133,6 +179,7 @@ class AppServer(Node):
         self.declare_parameter('goal_topic', '/goal_pose')
         self.declare_parameter('navigation_action', 'navigate_to_pose')
         self.declare_parameter('navigation_frame_id', 'map')
+        self.declare_parameter('initial_pose_topic', '/initialpose')
         self.declare_parameter('control_output_topic', '/control/cmd_vel')
         self.declare_parameter('lidar_override_topic', '/lidar/override_active')
         self.declare_parameter('lidar_warning_topic', '/lidar/warning')
@@ -142,6 +189,21 @@ class AppServer(Node):
         self.declare_parameter('person_slow_topic', '/vision/person_slow')
         self.declare_parameter('person_estop_topic', '/vision/person_estop')
         self.declare_parameter('status_topic', '/app_bridge/status')
+        self.declare_parameter('robot_pose_topic', '/amcl_pose')
+        self.declare_parameter('mission_status_topic', '/mission/status')
+        self.declare_parameter('mission_event_topic', '/mission/event')
+        self.declare_parameter('mission_action', 'execute_patrol')
+        self.declare_parameter('mission_control_service', '/mission/control')
+        self.declare_parameter('maps_root', '~/.icar/maps')
+        self.declare_parameter('route_database_path', '~/.icar/icar.db')
+        self.declare_parameter('map_saver_service', '/map_saver/save_map')
+        self.declare_parameter('map_topic', '/map')
+        self.declare_parameter('map_image_format', 'pgm')
+        self.declare_parameter('map_mode', 'trinary')
+        self.declare_parameter('map_free_thresh', 0.25)
+        self.declare_parameter('map_occupied_thresh', 0.65)
+        self.declare_parameter('service_call_timeout_sec', 10.0)
+        self.declare_parameter('control_lease_timeout_sec', 1.0)
         self.declare_parameter('default_mode', 'manual')
         self.declare_parameter('linear_speed', 0.2)
         self.declare_parameter('angular_speed', 0.7)
@@ -233,6 +295,7 @@ class AppServer(Node):
                             continue
                         self._handle_line(session, raw_line)
         finally:
+            self._release_control_lease(session, lease_id=None, reason='client disconnected')
             with self._sessions_lock:
                 self._sessions.discard(session)
             self._publish_status(f'client disconnected {address[0]}:{address[1]}')
@@ -299,7 +362,18 @@ class AppServer(Node):
             channels = string_list(payload.get('channels', []), 'channels')
             session.subscriptions.difference_update(channels)
             return {'channels': sorted(session.subscriptions)}
+        if command == 'teleop_acquire':
+            return self._acquire_control_lease(session)
+        if command == 'teleop_heartbeat':
+            return self._heartbeat_control_lease(session, payload)
+        if command == 'teleop_release':
+            return self._release_control_lease(
+                session,
+                lease_id=nonempty_string(payload.get('lease_id'), 'lease_id'),
+                reason='released by client',
+            )
         if command in {'move', 'twist'}:
+            self._validate_control_lease(session, payload)
             linear = finite_number(payload.get('linear', 0.0), 'linear', limit=self.max_linear_speed)
             angular = finite_number(payload.get('angular', 0.0), 'angular', limit=self.max_angular_speed)
             self._publish_twist(linear, angular)
@@ -322,6 +396,49 @@ class AppServer(Node):
             return self._follow_person(payload)
         if command == 'stop_follow':
             return self._stop_follow()
+        if command == 'map_list':
+            return {'maps': self.map_repository.list_maps()}
+        if command == 'map_get':
+            map_id = nonempty_string(payload.get('map_id'), 'map_id')
+            try:
+                return {'map': self.map_repository.get_map(map_id)}
+            except (MapNotFoundError, MapRepositoryError) as exc:
+                raise ProtocolError(str(exc)) from exc
+        if command == 'map_save':
+            return self._save_map(payload)
+        if command == 'initial_pose':
+            return self._set_initial_pose(payload)
+        if command == 'route_list':
+            map_id = payload.get('map_id')
+            if map_id is not None:
+                map_id = nonempty_string(map_id, 'map_id')
+            return {'routes': self.route_repository.list_routes(map_id)}
+        if command == 'route_get':
+            route_id = nonempty_string(payload.get('route_id'), 'route_id')
+            version = payload.get('version')
+            if version is not None:
+                version = nonnegative_integer(version, 'version')
+                if version == 0:
+                    version = None
+            try:
+                route = self.route_repository.load(route_id, version)
+            except RouteNotFoundError as exc:
+                raise ProtocolError(str(exc)) from exc
+            return {'route': route_to_mapping(route)}
+        if command == 'route_validate':
+            return self._validate_route(object_value(payload.get('route'), 'route'))
+        if command == 'route_save':
+            return self._save_route(payload)
+        if command == 'route_delete':
+            return self._delete_route(payload)
+        if command == 'mission_start':
+            return self._start_mission(payload)
+        if command == 'mission_pause':
+            return self._mission_control(payload, 'pause')
+        if command == 'mission_resume':
+            return self._mission_control(payload, 'resume')
+        if command == 'mission_cancel':
+            return self._mission_control(payload, 'cancel')
         raise ProtocolError(f'unknown command: {command}')
 
     def _handle_legacy_text(self, session: ClientSession, line: str) -> None:
@@ -329,14 +446,8 @@ class AppServer(Node):
         parts = line.lower().split()
         command = parts[0] if parts else ''
         try:
-            if command in {'w', 'forward'}:
-                self._publish_twist(self.linear_speed, 0.0)
-            elif command in {'s', 'back', 'backward'}:
-                self._publish_twist(-self.linear_speed, 0.0)
-            elif command in {'a', 'left'}:
-                self._publish_twist(0.0, self.angular_speed)
-            elif command in {'d', 'right'}:
-                self._publish_twist(0.0, -self.angular_speed)
+            if command in {'w', 'forward', 's', 'back', 'backward', 'a', 'left', 'd', 'right'}:
+                raise ProtocolError('legacy movement is disabled; use teleop_acquire and move with lease_id')
             elif command in {'x', 'stop'}:
                 self._publish_twist(0.0, 0.0)
             elif command == 'mode' and len(parts) == 2 and parts[1] in VALID_MODES:
@@ -369,7 +480,210 @@ class AppServer(Node):
         self._state['estop_active'] = active
         self._broadcast('status', self._snapshot())
 
+    # P2 control lease ----------------------------------------------------
+    def _acquire_control_lease(self, session: ClientSession) -> Dict[str, Any]:
+        if self._navigation_is_active():
+            raise ProtocolError('cancel the active direct navigation goal before manual takeover')
+        mission_state = str(self._state['mission'].get('state', '')).lower()
+        if self._mission_is_active() and mission_state != 'paused':
+            raise ProtocolError('pause the mission and wait for PAUSED before manual takeover')
+        with self._lease_lock:
+            try:
+                lease = self._control_lease.acquire(session.session_id, time.monotonic())
+            except LeaseError as exc:
+                raise ProtocolError(str(exc)) from exc
+            snapshot = self._control_lease.snapshot(time.monotonic())
+        # Manual is selected only after a lease has been created.  Releasing
+        # the lease deliberately leaves the car stopped in manual mode; an
+        # explicit mission resume is required before autonomous movement.
+        self._set_mode('manual')
+        self._broadcast('control_lease', snapshot)
+        return {'lease_id': lease.lease_id, 'expires_in_sec': self._control_lease.timeout_sec}
+
+    def _heartbeat_control_lease(self, session: ClientSession, payload: Dict[str, Any]) -> Dict[str, Any]:
+        lease_id = nonempty_string(payload.get('lease_id'), 'lease_id')
+        with self._lease_lock:
+            try:
+                lease = self._control_lease.heartbeat(session.session_id, lease_id, time.monotonic())
+            except LeaseError as exc:
+                raise ProtocolError(str(exc)) from exc
+            snapshot = self._control_lease.snapshot(time.monotonic())
+        self._broadcast('control_lease', snapshot)
+        return {'lease_id': lease.lease_id, 'expires_in_sec': self._control_lease.timeout_sec}
+
+    def _validate_control_lease(self, session: ClientSession, payload: Dict[str, Any]) -> None:
+        lease_id = nonempty_string(payload.get('lease_id'), 'lease_id')
+        with self._lease_lock:
+            try:
+                self._control_lease.heartbeat(session.session_id, lease_id, time.monotonic())
+            except LeaseError as exc:
+                raise ProtocolError(str(exc)) from exc
+
+    def _release_control_lease(
+        self,
+        session: ClientSession,
+        *,
+        lease_id: Optional[str],
+        reason: str,
+    ) -> Dict[str, Any]:
+        with self._lease_lock:
+            try:
+                released = self._control_lease.release(session.session_id, lease_id, time.monotonic())
+            except LeaseError as exc:
+                if reason == 'client disconnected':
+                    return {'released': False, 'reason': reason}
+                raise ProtocolError(str(exc)) from exc
+            snapshot = self._control_lease.snapshot(time.monotonic())
+        if released:
+            self._publish_twist(0.0, 0.0)
+            self._broadcast('control_lease', snapshot)
+        return {'released': released, 'reason': reason}
+
+    def _expire_control_lease(self) -> None:
+        with self._lease_lock:
+            expired = self._control_lease.expire(time.monotonic())
+            snapshot = self._control_lease.snapshot(time.monotonic())
+        if expired:
+            self._publish_twist(0.0, 0.0)
+            self._broadcast('control_lease', snapshot)
+
+    # P2 map and route interfaces ---------------------------------------
+    def _save_map(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        name = nonempty_string(payload.get('name'), 'name')
+        if len(name) > 80:
+            raise ProtocolError('name must be at most 80 characters')
+        if not self.map_saver_client.service_is_ready():
+            raise ProtocolError('map saver service is unavailable; start mapping mode with map_saver enabled')
+        map_id = self.map_repository.create_map_id(name)
+        try:
+            map_base = self.map_repository.prepare_save_location(map_id)
+            request = SaveMap.Request()
+            request.map_topic = self._parameter_topic('map_topic')
+            request.map_url = str(map_base)
+            request.image_format = str(self.get_parameter('map_image_format').value)
+            request.map_mode = str(self.get_parameter('map_mode').value)
+            request.free_thresh = float(self.get_parameter('map_free_thresh').value)
+            request.occupied_thresh = float(self.get_parameter('map_occupied_thresh').value)
+            result = self._wait_for_future(self.map_saver_client.call_async(request), 'map save')
+            if not bool(result.result):
+                raise ProtocolError('map saver reported failure')
+            manifest = self.map_repository.register_saved_map(map_id, name, str(map_base))
+        except MapRepositoryError as exc:
+            raise ProtocolError(str(exc)) from exc
+        return {'saved': True, 'map': manifest}
+
+    def _set_initial_pose(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        map_id = nonempty_string(payload.get('map_id'), 'map_id')
+        try:
+            self.map_repository.get_map(map_id)
+        except (MapNotFoundError, MapRepositoryError) as exc:
+            raise ProtocolError(str(exc)) from exc
+        x = finite_number(payload.get('x'), 'x')
+        y = finite_number(payload.get('y'), 'y')
+        yaw = finite_number(payload.get('yaw', 0.0), 'yaw')
+        pose = PoseWithCovarianceStamped()
+        pose.header.frame_id = self.frame_id
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.pose.position.x = x
+        pose.pose.pose.position.y = y
+        pose.pose.pose.orientation.z = math.sin(yaw / 2.0)
+        pose.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        pose.pose.covariance[0] = 0.25
+        pose.pose.covariance[7] = 0.25
+        pose.pose.covariance[35] = 0.0685
+        self.initial_pose_pub.publish(pose)
+        return {'map_id': map_id, 'x': x, 'y': y, 'yaw': yaw, 'frame_id': self.frame_id}
+
+    def _validate_route(self, definition: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            route = parse_route(definition)
+            validation = self.map_repository.validate_route(route)
+        except (RouteValidationError, MapNotFoundError, MapRepositoryError) as exc:
+            return {'valid': False, 'errors': [{'code': 'INVALID_ROUTE', 'message': str(exc)}]}
+        return {**validation, 'route': route_to_mapping(route)}
+
+    def _save_route(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        definition = object_value(payload.get('route'), 'route')
+        validation = self._validate_route(definition)
+        if not validation['valid']:
+            return {'saved': False, 'validation': validation}
+        route = parse_route(definition)
+        replace = boolean(payload.get('replace', False), 'replace')
+        try:
+            self.route_repository.save(route, replace=replace)
+        except Exception as exc:
+            raise ProtocolError(
+                'route version already exists; increment version or set replace=true'
+            ) from exc
+        return {'saved': True, 'route_id': route.route_id, 'version': route.version, 'validation': validation}
+
+    def _delete_route(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        route_id = nonempty_string(payload.get('route_id'), 'route_id')
+        version = payload.get('version')
+        if version is not None:
+            version = nonnegative_integer(version, 'version')
+            if version == 0:
+                version = None
+        deleted = self.route_repository.delete(route_id, version)
+        return {'deleted': deleted, 'route_id': route_id, 'version': version}
+
+    # P2 mission interfaces ----------------------------------------------
+    def _start_mission(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        route_id = nonempty_string(payload.get('route_id'), 'route_id')
+        route_version = nonnegative_integer(payload.get('route_version', 0), 'route_version')
+        start_index = nonnegative_integer(payload.get('start_checkpoint_index', 0), 'start_checkpoint_index')
+        loop = boolean(payload.get('loop', False), 'loop')
+        try:
+            self.route_repository.load(route_id, route_version or None)
+        except RouteNotFoundError as exc:
+            raise ProtocolError(str(exc)) from exc
+        if self._mission_is_active():
+            raise ProtocolError('a mission is already active or awaiting acceptance')
+        if self._navigation_is_active():
+            raise ProtocolError('cancel the active direct navigation goal before starting a mission')
+        if not self.mission_client.server_is_ready():
+            raise ProtocolError('mission action server is unavailable')
+        goal = ExecutePatrol.Goal()
+        goal.route_id = route_id
+        goal.route_version = route_version
+        goal.start_checkpoint_index = start_index
+        goal.loop = loop
+        self._state['mission'] = {
+            'state': 'goal_requested',
+            'route_id': route_id,
+            'route_version': route_version,
+        }
+        self.mission_client.send_goal_async(goal, feedback_callback=self._on_mission_feedback).add_done_callback(
+            self._on_mission_goal_response
+        )
+        self._broadcast('mission', dict(self._state['mission']))
+        return dict(self._state['mission'])
+
+    def _mission_control(self, payload: Dict[str, Any], command: str) -> Dict[str, Any]:
+        mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
+        if not self.mission_control_client.service_is_ready():
+            raise ProtocolError('mission control service is unavailable')
+        request = MissionControl.Request()
+        request.mission_id = mission_id
+        request.command = command
+        result = self._wait_for_future(
+            self.mission_control_client.call_async(request), f'mission {command}'
+        )
+        return {'accepted': bool(result.accepted), 'state': result.state, 'message': result.message}
+
+    def _wait_for_future(self, future: Any, operation: str) -> Any:
+        completed = threading.Event()
+        future.add_done_callback(lambda _: completed.set())
+        if not completed.wait(self.service_call_timeout_sec):
+            raise ProtocolError(f'{operation} timed out')
+        try:
+            return future.result()
+        except Exception as exc:
+            raise ProtocolError(f'{operation} failed: {exc}') from exc
+
     def _set_navigation_goal(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._mission_is_active():
+            raise ProtocolError('mission is active; use mission control instead of direct navigation')
         x = finite_number(payload.get('x'), 'x')
         y = finite_number(payload.get('y'), 'y')
         yaw = finite_number(payload.get('yaw', 0.0), 'yaw')
@@ -406,6 +720,18 @@ class AppServer(Node):
         self._state['navigation'] = {'state': 'cancel_requested'}
         self._broadcast('navigation', dict(self._state['navigation']))
         return dict(self._state['navigation'])
+
+    def _navigation_is_active(self) -> bool:
+        return self._app_goal_handle is not None or self._state['navigation'].get('state') in {
+            'goal_sent', 'accepted', 'cancel_requested',
+        }
+
+    def _mission_is_active(self) -> bool:
+        state = str(self._state['mission'].get('state', '')).lower()
+        return self._mission_goal_handle is not None or state in {
+            'goal_requested', 'accepted', 'preparing', 'localizing', 'navigating',
+            'arrival_confirming', 'recording', 'pausing', 'paused', 'resuming',
+        }
 
     def _follow_person(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_track_id = payload.get('track_id')
@@ -456,6 +782,53 @@ class AppServer(Node):
         self._app_goal_handle = None
         self._broadcast('navigation', dict(self._state['navigation']))
 
+    def _on_mission_goal_response(self, future: Any) -> None:
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self._state['mission'] = {'state': 'failed', 'error': str(exc)}
+        else:
+            if not goal_handle.accepted:
+                self._state['mission'] = {'state': 'rejected'}
+            else:
+                self._mission_goal_handle = goal_handle
+                self._state['mission']['state'] = 'accepted'
+                goal_handle.get_result_async().add_done_callback(self._on_mission_result)
+        self._broadcast('mission', dict(self._state['mission']))
+
+    def _on_mission_feedback(self, feedback_message: Any) -> None:
+        feedback = feedback_message.feedback
+        self._state['mission'] = {
+            'mission_id': feedback.mission_id,
+            'state': feedback.state,
+            'checkpoint_id': feedback.checkpoint_id,
+            'checkpoint_index': int(feedback.checkpoint_index),
+            'checkpoint_total': int(feedback.checkpoint_total),
+            'progress': float(feedback.progress),
+            'retry_count': int(feedback.retry_count),
+            'detail': feedback.detail,
+        }
+        self._broadcast('mission', dict(self._state['mission']))
+
+    def _on_mission_result(self, future: Any) -> None:
+        try:
+            result_wrapper = future.result()
+            result = result_wrapper.result
+            self._state['mission'] = {
+                'mission_id': result.mission_id,
+                'state': result.final_state,
+                'success': bool(result.success),
+                'completed_checkpoints': int(result.completed_checkpoints),
+                'failed_checkpoints': int(result.failed_checkpoints),
+                'skipped_checkpoints': int(result.skipped_checkpoints),
+                'report_path': result.report_path,
+                'message': result.message,
+            }
+        except Exception as exc:
+            self._state['mission'] = {'state': 'failed', 'error': str(exc)}
+        self._mission_goal_handle = None
+        self._broadcast('mission', dict(self._state['mission']))
+
     # ROS telemetry --------------------------------------------------------
     def _on_mode(self, msg: String) -> None:
         self._state['mode'] = msg.data.strip() or self._state['mode']
@@ -502,11 +875,64 @@ class AppServer(Node):
         self._state['command'] = {'linear': msg.linear.x, 'angular': msg.angular.z}
         self._broadcast('status', self._snapshot())
 
+    def _on_robot_pose(self, msg: PoseWithCovarianceStamped) -> None:
+        orientation = msg.pose.pose.orientation
+        yaw = math.atan2(
+            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+        )
+        self._state['pose'] = {
+            'frame_id': msg.header.frame_id or self.frame_id,
+            'stamp': {'sec': int(msg.header.stamp.sec), 'nanosec': int(msg.header.stamp.nanosec)},
+            'x': msg.pose.pose.position.x,
+            'y': msg.pose.pose.position.y,
+            'yaw': yaw,
+            'covariance': {
+                'x': msg.pose.covariance[0],
+                'y': msg.pose.covariance[7],
+                'yaw': msg.pose.covariance[35],
+            },
+        }
+        self._broadcast('pose', dict(self._state['pose']))
+
+    def _on_mission_status(self, msg: MissionStatus) -> None:
+        self._state['mission'] = {
+            'mission_id': msg.mission_id,
+            'route_id': msg.route_id,
+            'route_version': int(msg.route_version),
+            'state': msg.state,
+            'checkpoint_id': msg.checkpoint_id,
+            'checkpoint_index': int(msg.checkpoint_index),
+            'checkpoint_total': int(msg.checkpoint_total),
+            'progress': float(msg.progress),
+            'retry_count': int(msg.retry_count),
+            'detail': msg.detail,
+        }
+        self._broadcast('mission', dict(self._state['mission']))
+
+    def _on_mission_event(self, msg: PatrolEvent) -> None:
+        self._broadcast('event', {
+            'mission_id': msg.mission_id,
+            'previous_state': msg.previous_state,
+            'state': msg.state,
+            'checkpoint_id': msg.checkpoint_id,
+            'code': msg.code,
+            'detail': msg.detail,
+            'stamp': {'sec': int(msg.header.stamp.sec), 'nanosec': int(msg.header.stamp.nanosec)},
+        })
+
     # Responses and telemetry ---------------------------------------------
     def _capabilities(self) -> Dict[str, Any]:
         return {
             'protocol_version': PROTOCOL_VERSION,
-            'commands': ['ping', 'capabilities', 'status', 'subscribe', 'unsubscribe', 'move', 'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'stop_follow'],
+            'commands': [
+                'ping', 'capabilities', 'status', 'subscribe', 'unsubscribe',
+                'teleop_acquire', 'teleop_heartbeat', 'teleop_release', 'move',
+                'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'stop_follow',
+                'map_list', 'map_get', 'map_save', 'initial_pose',
+                'route_list', 'route_get', 'route_validate', 'route_save', 'route_delete',
+                'mission_start', 'mission_pause', 'mission_resume', 'mission_cancel',
+            ],
             'modes': sorted(VALID_MODES),
             'telemetry_channels': sorted(TELEMETRY_CHANNELS),
             'limits': {'max_linear_speed': self.max_linear_speed, 'max_angular_speed': self.max_angular_speed},
@@ -523,6 +949,9 @@ class AppServer(Node):
             'person_safety': dict(self._state['person_safety']),
             'command': dict(self._state['command']),
             'navigation': dict(self._state['navigation']),
+            'pose': dict(self._state['pose']) if self._state['pose'] is not None else None,
+            'mission': dict(self._state['mission']),
+            'control_lease': self._control_lease_snapshot(),
         }
 
     def _lidar_snapshot(self) -> Dict[str, Any]:
@@ -531,6 +960,10 @@ class AppServer(Node):
             'warning_active': self._state['lidar_warning_active'],
             'warning_state': self._state['lidar_warning_state'],
         }
+
+    def _control_lease_snapshot(self) -> Dict[str, Any]:
+        with self._lease_lock:
+            return self._control_lease.snapshot(time.monotonic())
 
     def _broadcast(self, channel: str, data: Dict[str, Any]) -> None:
         with self._sessions_lock:

@@ -61,6 +61,8 @@ def generate_launch_description() -> LaunchDescription:
     mapping_scan_filter_multiple = LaunchConfiguration('mapping_scan_filter_multiple')
     mapping_publish_laser_tf = LaunchConfiguration('mapping_publish_laser_tf')
     mapping_publish_base_link_tf = LaunchConfiguration('mapping_publish_base_link_tf')
+    mapping_use_map_saver = LaunchConfiguration('mapping_use_map_saver')
+    mapping_map_save_timeout_sec = LaunchConfiguration('mapping_map_save_timeout_sec')
     use_navigation = LaunchConfiguration('use_navigation')
     navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
@@ -102,6 +104,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('mapping_scan_filter_multiple', default_value='2'),
         DeclareLaunchArgument('mapping_publish_laser_tf', default_value='false'),
         DeclareLaunchArgument('mapping_publish_base_link_tf', default_value='false'),
+        DeclareLaunchArgument('mapping_use_map_saver', default_value='true'),
+        DeclareLaunchArgument('mapping_map_save_timeout_sec', default_value='10.0'),
         DeclareLaunchArgument('use_navigation', default_value='false'),
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
@@ -253,6 +257,8 @@ def generate_launch_description() -> LaunchDescription:
                 'scan_filter_multiple': mapping_scan_filter_multiple,
                 'publish_laser_tf': mapping_publish_laser_tf,
                 'publish_base_link_tf': mapping_publish_base_link_tf,
+                'use_map_saver': mapping_use_map_saver,
+                'map_save_timeout_sec': mapping_map_save_timeout_sec,
             }.items(),
             condition=IfCondition(use_mapping),
         ),

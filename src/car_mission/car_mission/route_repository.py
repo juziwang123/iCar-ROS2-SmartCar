@@ -77,6 +77,16 @@ class RouteRepository:
             rows = connection.execute(query, arguments).fetchall()
         return [dict(row) for row in rows]
 
+    def delete(self, route_id: str, version: Optional[int] = None) -> int:
+        query = 'DELETE FROM routes WHERE route_id = ?'
+        arguments = (route_id,)
+        if version is not None:
+            query += ' AND version = ?'
+            arguments = (route_id, version)
+        with self._connection() as connection:
+            cursor = connection.execute(query, arguments)
+        return int(cursor.rowcount)
+
     def import_yaml(self, route_file: str, *, replace: bool = True) -> RouteDefinition:
         try:
             import yaml

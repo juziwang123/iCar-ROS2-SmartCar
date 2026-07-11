@@ -129,6 +129,13 @@ class TestRepositories(unittest.TestCase):
             with self.assertRaises(RouteNotFoundError):
                 routes.load('missing_route')
 
+            newer_route_data = sample_route()
+            newer_route_data['version'] = 3
+            routes.save(parse_route(newer_route_data))
+            self.assertEqual(routes.load('lab_route').version, 3)
+            self.assertEqual(routes.delete('lab_route', 2), 1)
+            self.assertEqual(routes.load('lab_route').version, 3)
+
             missions = MissionRepository(database)
             missions.create_mission('mission-1', 'lab_route', 2, 'PREPARING', 2)
             missions.update_status(
@@ -153,6 +160,9 @@ class TestRepositories(unittest.TestCase):
             self.assertEqual(mission['state'], 'NAVIGATING')
             self.assertEqual(mission['retry_count'], 1)
             self.assertEqual(missions.list_events('mission-1')[0]['code'], 'NAV_GOAL_SENT')
+            self.assertEqual(routes.delete('lab_route'), 1)
+            with self.assertRaises(RouteNotFoundError):
+                routes.load('lab_route')
 
 
 if __name__ == '__main__':

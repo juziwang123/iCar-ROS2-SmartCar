@@ -13,6 +13,8 @@ def generate_launch_description() -> LaunchDescription:
     scan_filter_multiple = LaunchConfiguration('scan_filter_multiple')
     publish_laser_tf = LaunchConfiguration('publish_laser_tf')
     publish_base_link_tf = LaunchConfiguration('publish_base_link_tf')
+    use_map_saver = LaunchConfiguration('use_map_saver')
+    map_save_timeout_sec = LaunchConfiguration('map_save_timeout_sec')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_rviz', default_value='false'),
@@ -22,6 +24,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('scan_filter_multiple', default_value='2'),
         DeclareLaunchArgument('publish_laser_tf', default_value='false'),
         DeclareLaunchArgument('publish_base_link_tf', default_value='false'),
+        # The APP bridge calls this lifecycle service to persist a completed
+        # SLAM map.  It is intentionally started only in mapping mode.
+        DeclareLaunchArgument('use_map_saver', default_value='true'),
+        DeclareLaunchArgument('map_save_timeout_sec', default_value='10.0'),
         SetEnvironmentVariable('QT_AUTO_SCREEN_SCALE_FACTOR', '0'),
         SetEnvironmentVariable('QT_SCALE_FACTOR', '0.8'),
         SetEnvironmentVariable('QT_FONT_DPI', '96'),
@@ -64,6 +70,30 @@ def generate_launch_description() -> LaunchDescription:
                 'map_frame': 'map',
                 'scan_topic': scan_topic,
             }],
+            output='screen',
+        ),
+        Node(
+            package='nav2_map_server',
+            executable='map_saver_server',
+            name='map_saver',
+            parameters=[{
+                'save_map_timeout': map_save_timeout_sec,
+                'free_thresh_default': 0.25,
+                'occupied_thresh_default': 0.65,
+            }],
+            condition=IfCondition(use_map_saver),
+            output='screen',
+        ),
+        Node(
+            package='nav2_lifecycle_manager',
+            executable='lifecycle_manager',
+            name='map_saver_lifecycle_manager',
+            parameters=[{
+                'autostart': True,
+                'node_names': ['map_saver'],
+                'use_sim_time': use_sim_time,
+            }],
+            condition=IfCondition(use_map_saver),
             output='screen',
         ),
         Node(

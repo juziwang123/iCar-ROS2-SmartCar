@@ -6,7 +6,18 @@ import unittest
 PACKAGE_ROOT = Path(__file__).resolve().parents[1] / 'src' / 'car_app_bridge'
 sys.path.insert(0, str(PACKAGE_ROOT))
 
-from car_app_bridge.protocol import ProtocolError, boolean, finite_number, response, string_list
+from car_app_bridge.protocol import (
+    PROTOCOL_VERSION,
+    TELEMETRY_CHANNELS,
+    ProtocolError,
+    boolean,
+    finite_number,
+    nonempty_string,
+    nonnegative_integer,
+    object_value,
+    response,
+    string_list,
+)
 
 
 class TestAppProtocol(unittest.TestCase):
@@ -43,6 +54,18 @@ class TestAppProtocol(unittest.TestCase):
             string_list('status', 'channels')
         with self.assertRaises(ProtocolError):
             string_list(['status', 1], 'channels')
+
+    def test_v2_exposes_patrol_and_control_telemetry_channels(self):
+        self.assertEqual(PROTOCOL_VERSION, 2)
+        self.assertTrue({'pose', 'mission', 'event', 'control_lease'} <= TELEMETRY_CHANNELS)
+
+    def test_object_and_integer_fields_are_strict(self):
+        self.assertEqual(object_value({'route_id': 'r'}, 'route')['route_id'], 'r')
+        self.assertEqual(nonempty_string(' r ', 'route_id'), 'r')
+        self.assertEqual(nonnegative_integer(0, 'version'), 0)
+        for value in (True, -1, 1.2, '1'):
+            with self.assertRaises(ProtocolError):
+                nonnegative_integer(value, 'version')
 
 
 if __name__ == '__main__':
