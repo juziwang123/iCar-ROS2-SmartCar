@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>car_mission</name>
+  <version>0.1.0</version>
+  <description>Route validation, mission state management, and Nav2 patrol execution for iCar.</description>
+  <maintainer email="team@example.com">iCar Team</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>action_msgs</depend>
+  <depend>car_interfaces</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

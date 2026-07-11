@@ -1,0 +1,31 @@
+schema_version: 1
+route_id: demo_lab_patrol
+map_id: lab_map
+name: 实验室巡逻示例路线
+version: 1
+loop: false
+checkpoints:
+  - checkpoint_id: CP-01
+    sequence: 1
+    name: 起点检查点
+    type: checkin
+    pose: {frame_id: map, x: 1.0, y: 0.0, yaw: 0.0}
+    arrival: {position_tolerance_m: 0.30, yaw_tolerance_rad: 0.35, dwell_sec: 0.0}
+    tasks: []
+    failure_policy: {navigation: retry_then_wait_operator}
+  - checkpoint_id: CP-02
+    sequence: 2
+    name: 东侧途经点
+    type: transit
+    pose: {frame_id: map, x: 1.0, y: 1.0, yaw: 1.57}
+    arrival: {position_tolerance_m: 0.30, yaw_tolerance_rad: 0.35, dwell_sec: 0.0}
+    tasks: []
+    failure_policy: {navigation: retry_then_skip}
+  - checkpoint_id: CP-03
+    sequence: 3
+    name: 西侧检查点
+    type: checkin
+    pose: {frame_id: map, x: 0.0, y: 1.0, yaw: 3.14}
+    arrival: {position_tolerance_m: 0.30, yaw_tolerance_rad: 0.35, dwell_sec: 0.0}
+    tasks: []
+    failure_policy: {navigation: retry_then_wait_operator}

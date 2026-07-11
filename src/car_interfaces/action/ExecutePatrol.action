@@ -1,0 +1,25 @@
+# Goal
+string route_id
+uint32 route_version
+uint32 start_checkpoint_index
+bool loop
+---
+# Result
+string mission_id
+bool success
+string final_state
+uint32 completed_checkpoints
+uint32 failed_checkpoints
+uint32 skipped_checkpoints
+string report_path
+string message
+---
+# Feedback
+string mission_id
+string state
+string checkpoint_id
+uint32 checkpoint_index
+uint32 checkpoint_total
+float32 progress
+uint32 retry_count
+string detail

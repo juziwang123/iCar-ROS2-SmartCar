@@ -1,0 +1,11 @@
+std_msgs/Header header
+string mission_id
+string route_id
+uint32 route_version
+string state
+string checkpoint_id
+uint32 checkpoint_index
+uint32 checkpoint_total
+float32 progress
+uint32 retry_count
+string detail

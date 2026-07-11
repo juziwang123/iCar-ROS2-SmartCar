@@ -25,13 +25,18 @@ def _validate_operation_mode(context, *args, **kwargs):
         # Patrol includes navigation.launch.py itself, therefore it is a
         # separate top-level mode instead of an add-on to use_navigation.
         'patrol': _launch_boolean(LaunchConfiguration('use_patrol').perform(context), 'use_patrol'),
+        # Mission manager needs Nav2 but must not run alongside the legacy
+        # waypoint patrol, which would submit a second route independently.
+        'mission': _launch_boolean(LaunchConfiguration('use_mission').perform(context), 'use_mission'),
     }
-    active = [name for name, enabled in modes.items() if enabled]
-    if len(active) > 1:
+    if modes['mapping'] and any(modes[name] for name in ('navigation', 'patrol', 'mission')):
         raise RuntimeError(
-            'Only one of use_mapping, use_navigation, or use_patrol may be true; '
-            f'got {", ".join(active)}'
+            'use_mapping cannot be combined with use_navigation, use_patrol, or use_mission'
         )
+    if modes['patrol'] and (modes['navigation'] or modes['mission']):
+        raise RuntimeError('use_patrol cannot be combined with use_navigation or use_mission')
+    if modes['mission'] and not modes['navigation']:
+        raise RuntimeError('use_mission:=true requires use_navigation:=true')
     return []
 
 
@@ -59,6 +64,7 @@ def generate_launch_description() -> LaunchDescription:
     use_navigation = LaunchConfiguration('use_navigation')
     navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
+    use_mission = LaunchConfiguration('use_mission')
     params_file = LaunchConfiguration('params_file')
     lidar_params_file = LaunchConfiguration('lidar_params_file')
     vision_params_file = LaunchConfiguration('vision_params_file')
@@ -71,6 +77,9 @@ def generate_launch_description() -> LaunchDescription:
     navigation_goal_yaw = LaunchConfiguration('navigation_goal_yaw')
     navigation_send_goal = LaunchConfiguration('navigation_send_goal')
     waypoints_file = LaunchConfiguration('waypoints_file')
+    mission_route_file = LaunchConfiguration('mission_route_file')
+    mission_database_path = LaunchConfiguration('mission_database_path')
+    mission_require_localization = LaunchConfiguration('mission_require_localization')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_keyboard', default_value='true'),
@@ -96,11 +105,20 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_navigation', default_value='false'),
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
+        DeclareLaunchArgument('use_mission', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('navigation_goal_x', default_value='0.5'),
         DeclareLaunchArgument('navigation_goal_y', default_value='0.0'),
         DeclareLaunchArgument('navigation_goal_yaw', default_value='0.0'),
         DeclareLaunchArgument('navigation_send_goal', default_value='false'),
+        DeclareLaunchArgument(
+            'mission_route_file',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('car_mission'), 'config', 'demo_route.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument('mission_database_path', default_value='~/.icar/icar.db'),
+        DeclareLaunchArgument('mission_require_localization', default_value='false'),
         OpaqueFunction(function=_validate_operation_mode),
         DeclareLaunchArgument(
             'waypoints_file',
@@ -257,6 +275,21 @@ def generate_launch_description() -> LaunchDescription:
                 'use_sim_time': use_sim_time,
             }.items(),
             condition=IfCondition(use_navigation),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([
+                    FindPackageShare('car_mission'),
+                    'launch',
+                    'mission.launch.py',
+                ])
+            ),
+            launch_arguments={
+                'route_file': mission_route_file,
+                'database_path': mission_database_path,
+                'require_localization': mission_require_localization,
+            }.items(),
+            condition=IfCondition(use_mission),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
