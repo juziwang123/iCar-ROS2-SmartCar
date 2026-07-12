@@ -22,3 +22,9 @@
     confidence_threshold: 0.45
     model_path: ''
     class_names_path: ''
+
+    # Person detector (ultralytics YOLO)
+    person_confidence_threshold: 0.5
+    person_model_name: 'yolov8n.pt'
+    person_input_width: 640
+    person_input_height: 640

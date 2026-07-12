@@ -16,6 +16,7 @@ source "$(cd "$(dirname "$0")" && pwd)/common_real_car.sh"
 USE_COLOR_DETECTOR="${USE_COLOR_DETECTOR:-true}"
 USE_TRACKER="${USE_TRACKER:-false}"
 USE_YOLO="${USE_YOLO:-false}"
+USE_PERSON_DETECTOR="${USE_PERSON_DETECTOR:-false}"
 USE_KEYBOARD="${USE_KEYBOARD:-false}"
 
 main() {
@@ -29,6 +30,7 @@ main() {
   echo "颜色检测：${USE_COLOR_DETECTOR}"
   echo "颜色追踪：${USE_TRACKER}"
   echo "YOLO 检测：${USE_YOLO}"
+  echo "人物识别：${USE_PERSON_DETECTOR}"
   echo
 
   start_vendor_base_stack
@@ -48,7 +50,8 @@ main() {
       use_vision:=true \
       use_color_detector:="${USE_COLOR_DETECTOR}" \
       use_color_tracker:="${USE_TRACKER}" \
-      use_yolo:="${USE_YOLO}"
+      use_yolo:="${USE_YOLO}" \
+      use_person_detector:="${USE_PERSON_DETECTOR}"
 
   wait_for_node /safety_mux 20 "${LOG_DIR}/vision_test.log" || true
   wait_for_node /color_detector 20 "${LOG_DIR}/vision_test.log" || true

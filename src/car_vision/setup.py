@@ -27,6 +27,7 @@ setup(
             'color_detector = car_vision.color_detector:main',
             'color_tracker = car_vision.color_tracker:main',
             'yolo_detector = car_vision.yolo_detector:main',
+            'person_detector = car_vision.person_detector:main',
         ],
     },
 )

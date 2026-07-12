@@ -11,11 +11,13 @@ def generate_launch_description() -> LaunchDescription:
     use_color_detector = LaunchConfiguration('use_color_detector')
     use_color_tracker = LaunchConfiguration('use_color_tracker')
     use_yolo = LaunchConfiguration('use_yolo')
+    use_person_detector = LaunchConfiguration('use_person_detector')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_color_detector', default_value='true'),
         DeclareLaunchArgument('use_color_tracker', default_value='false'),
         DeclareLaunchArgument('use_yolo', default_value='false'),
+        DeclareLaunchArgument('use_person_detector', default_value='false'),
         DeclareLaunchArgument(
             'params_file',
             default_value=PathJoinSubstitution([
@@ -46,6 +48,14 @@ def generate_launch_description() -> LaunchDescription:
             name='yolo_detector',
             parameters=[params_file],
             condition=IfCondition(use_yolo),
+            output='screen',
+        ),
+        Node(
+            package='car_vision',
+            executable='person_detector',
+            name='person_detector',
+            parameters=[params_file],
+            condition=IfCondition(use_person_detector),
             output='screen',
         ),
     ])
