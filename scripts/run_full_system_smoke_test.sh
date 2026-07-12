@@ -20,6 +20,7 @@ source "$(cd "$(dirname "$0")" && pwd)/common_real_car.sh"
 WITH_YOLO="${WITH_YOLO:-false}"
 SKIP_UNIT_TESTS="${SKIP_UNIT_TESTS:-false}"
 TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-8}"
+MAPPING_MAP_TIMEOUT="${MAPPING_MAP_TIMEOUT:-70}"
 MAP="${MAP:-}"
 APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 FAILURES=0
@@ -33,6 +34,19 @@ pass() {
 fail() {
   echo "[FAIL] $*" >&2
   FAILURES=$((FAILURES + 1))
+}
+
+skip() {
+  echo "[SKIP] $*"
+}
+
+topic_has_message() {
+  local topic=$1
+  local output_file=$2
+  local durability="${3:-volatile}"
+  local timeout_sec="${4:-${TOPIC_TIMEOUT}}"
+  ros2 topic list 2>/dev/null | grep -qx "${topic}" \
+    && capture_topic_message "${topic}" "${output_file}" "${durability}" "${timeout_sec}"
 }
 
 check_package() {
@@ -57,11 +71,13 @@ check_node() {
 check_topic_message() {
   local topic=$1
   local log_file=$2
+  local durability="${3:-volatile}"
+  local timeout_sec="${4:-${TOPIC_TIMEOUT}}"
   if ! ros2 topic list 2>/dev/null | grep -qx "${topic}"; then
     fail "话题 ${topic} 不存在（日志：${log_file}）"
     return
   fi
-  if capture_topic_message "${topic}" "${log_file}.topic${topic//\//_}.log"; then
+  if capture_topic_message "${topic}" "${log_file}.topic${topic//\//_}.log" "${durability}" "${timeout_sec}"; then
     pass "话题 ${topic} 有新鲜数据"
   else
     fail "话题 ${topic} 在 ${TOPIC_TIMEOUT} 内没有数据（日志：${log_file}）"
@@ -71,11 +87,15 @@ check_topic_message() {
 capture_topic_message() {
   local topic=$1
   local output_file=$2
+  local durability="${3:-volatile}"
+  local timeout_sec="${4:-${TOPIC_TIMEOUT}}"
   local start_time child_pid
   : >"${output_file}"
   # ROS 2 Foxy has no single-message echo option. Start echo in the
   # background, wait for its first bytes, then stop only the CLI process.
-  ros2 topic echo "${topic}" --qos-reliability best_effort >"${output_file}" 2>&1 &
+  env PYTHONUNBUFFERED=1 ros2 topic echo "${topic}" \
+    --qos-reliability best_effort --qos-durability "${durability}" \
+    >"${output_file}" 2>&1 &
   child_pid=$!
   start_time=$(date +%s)
   while true; do
@@ -93,7 +113,7 @@ capture_topic_message() {
       wait "${child_pid}" >/dev/null 2>&1 || true
       return 1
     fi
-    if (( $(date +%s) - start_time >= TOPIC_TIMEOUT )); then
+    if (( $(date +%s) - start_time >= timeout_sec )); then
       kill "${child_pid}" >/dev/null 2>&1 || true
       wait "${child_pid}" >/dev/null 2>&1 || true
       return 1
@@ -245,6 +265,10 @@ main() {
   start_vendor_camera
   check_topic_message /scan "${LOG_DIR}/vendor_bringup.log"
   check_topic_message /odom "${LOG_DIR}/vendor_bringup.log"
+  local camera_ready=false
+  if topic_has_message /camera/color/image_raw "${LOG_DIR}/camera_probe.log"; then
+    camera_ready=true
+  fi
   check_topic_message /camera/color/image_raw "${LOG_DIR}/camera.log"
 
   start_project control_lidar \
@@ -261,15 +285,19 @@ main() {
   check_topic_message /control/cmd_vel "${LOG_DIR}/smoke_control_lidar.log"
   check_topic_message /lidar/warning_state "${LOG_DIR}/smoke_control_lidar.log"
 
-  start_project vision_color \
-    use_keyboard:=false \
-    use_lidar_avoidance:=false \
-    use_mapping:=false use_navigation:=false use_patrol:=false \
-    use_vision:=true use_color_detector:=true use_color_tracker:=false \
-    use_yolo:=false use_app_bridge:=false
-  check_node /color_detector "${LOG_DIR}/smoke_vision_color.log"
-  check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_color.log"
-  if [[ "${WITH_YOLO}" == "true" ]]; then
+  if [[ "${camera_ready}" == "true" ]]; then
+    start_project vision_color \
+      use_keyboard:=false \
+      use_lidar_avoidance:=false \
+      use_mapping:=false use_navigation:=false use_patrol:=false \
+      use_vision:=true use_color_detector:=true use_color_tracker:=false \
+      use_yolo:=false use_app_bridge:=false
+    check_node /color_detector "${LOG_DIR}/smoke_vision_color.log"
+    check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_color.log"
+  else
+    skip "Color vision requires /camera/color/image_raw"
+  fi
+  if [[ "${WITH_YOLO}" == "true" && "${camera_ready}" == "true" ]]; then
     # Do not run color_detector here: both detectors publish /vision/detections
     # and would let a failed YOLO node be hidden by color-detector messages.
     start_project vision_yolo \
@@ -281,6 +309,8 @@ main() {
     check_node /yolo_detector "${LOG_DIR}/smoke_vision_yolo.log"
     check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_yolo.log"
     check_topic_message /vision/person_estop "${LOG_DIR}/smoke_vision_yolo.log"
+  elif [[ "${WITH_YOLO}" == "true" ]]; then
+    skip "YOLO requires /camera/color/image_raw"
   fi
 
   start_project mapping \
@@ -290,7 +320,7 @@ main() {
   check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_mapping.log"
   check_node /map_saver "${LOG_DIR}/smoke_mapping.log"
   check_lifecycle_active /map_saver "${LOG_DIR}/smoke_mapping.log"
-  check_topic_message /map "${LOG_DIR}/smoke_mapping.log"
+  check_topic_message /map "${LOG_DIR}/smoke_mapping.log" transient_local "${MAPPING_MAP_TIMEOUT}"
   check_service /map_saver/save_map
 
   local nav_args=(
@@ -306,10 +336,17 @@ main() {
   check_node /bt_navigator "${LOG_DIR}/smoke_navigation.log"
   check_node /controller_server "${LOG_DIR}/smoke_navigation.log"
   check_node /planner_server "${LOG_DIR}/smoke_navigation.log"
-  check_lifecycle_active /bt_navigator "${LOG_DIR}/smoke_navigation.log"
-  check_lifecycle_active /controller_server "${LOG_DIR}/smoke_navigation.log"
-  check_lifecycle_active /planner_server "${LOG_DIR}/smoke_navigation.log"
-  check_topic_message /map "${LOG_DIR}/smoke_navigation.log"
+  # AMCL cannot create map -> odom until an operator supplies an initial
+  # pose. Requiring every Nav2 lifecycle node to be active in a no-motion
+  # smoke test would therefore fail a correctly safe vehicle.
+  if [[ "${NAVIGATION_EXPECT_ACTIVE:-false}" == "true" ]]; then
+    check_lifecycle_active /bt_navigator "${LOG_DIR}/smoke_navigation.log"
+    check_lifecycle_active /controller_server "${LOG_DIR}/smoke_navigation.log"
+    check_lifecycle_active /planner_server "${LOG_DIR}/smoke_navigation.log"
+  else
+    skip "Nav2 active check requires an operator-provided initial pose"
+  fi
+  check_topic_message /map "${LOG_DIR}/smoke_navigation.log" transient_local
   check_action /navigate_to_pose
 
   local mission_args=(
@@ -329,8 +366,12 @@ main() {
   check_node /inspection_executor "${LOG_DIR}/smoke_mission.log"
   check_node /app_server "${LOG_DIR}/smoke_mission.log"
   check_node /lidar_avoidance "${LOG_DIR}/smoke_mission.log"
-  check_topic_contains /system/health '"healthy":true' "${LOG_DIR}/smoke_mission.log"
-  check_topic_contains /system/sensor_fault 'data: false' "${LOG_DIR}/smoke_mission.log"
+  if [[ "${camera_ready}" == "true" ]]; then
+    check_topic_contains /system/health '"healthy":true' "${LOG_DIR}/smoke_mission.log"
+    check_topic_contains /system/sensor_fault 'data: false' "${LOG_DIR}/smoke_mission.log"
+  else
+    skip "Health green-state requires /camera/color/image_raw"
+  fi
   check_action /execute_patrol
   check_action /verify_checkpoint
   check_action /run_inspection

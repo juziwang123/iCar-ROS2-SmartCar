@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -91,17 +91,24 @@ def generate_launch_description() -> LaunchDescription:
             condition=IfCondition(use_map_saver),
             output='screen',
         ),
-        Node(
-            package='nav2_lifecycle_manager',
-            executable='lifecycle_manager',
-            name='map_saver_lifecycle_manager',
-            parameters=[{
-                'autostart': True,
-                'node_names': ['map_saver'],
-                'use_sim_time': use_sim_time,
-            }],
-            condition=IfCondition(use_map_saver),
-            output='screen',
+        # On the Jetson the map_saver process can take longer to create its
+        # lifecycle services than the manager takes to issue its first
+        # transition. Start the manager after the server has registered so
+        # the map-saver service reliably reaches ACTIVE.
+        TimerAction(
+            period=1.0,
+            actions=[Node(
+                package='nav2_lifecycle_manager',
+                executable='lifecycle_manager',
+                name='map_saver_lifecycle_manager',
+                parameters=[{
+                    'autostart': True,
+                    'node_names': ['map_saver'],
+                    'use_sim_time': use_sim_time,
+                }],
+                condition=IfCondition(use_map_saver),
+                output='screen',
+            )],
         ),
         Node(
             package='rviz2',
