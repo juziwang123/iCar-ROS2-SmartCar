@@ -121,14 +121,12 @@ wait_for_node() {
   local node=$1
   local timeout_sec=$2
   local log_file=$3
-  local discovery_spin_time="${4:-2}"
   local start_time
   start_time=$(date +%s)
 
   echo "等待节点：${node}"
   while true; do
-    if ros2 node list --no-daemon --spin-time "${discovery_spin_time}" 2>/dev/null \
-        | grep -qx "${node}"; then
+    if ros2 node list 2>/dev/null | grep -qx "${node}"; then
       echo "  已就绪：${node}"
       echo
       return 0
