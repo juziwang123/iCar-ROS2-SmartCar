@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -15,6 +16,7 @@ def generate_launch_description() -> LaunchDescription:
     publish_base_link_tf = LaunchConfiguration('publish_base_link_tf')
     use_map_saver = LaunchConfiguration('use_map_saver')
     map_save_timeout_sec = LaunchConfiguration('map_save_timeout_sec')
+    max_laser_range = LaunchConfiguration('max_laser_range')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_rviz', default_value='false'),
@@ -27,7 +29,9 @@ def generate_launch_description() -> LaunchDescription:
         # The APP bridge calls this lifecycle service to persist a completed
         # SLAM map.  It is intentionally started only in mapping mode.
         DeclareLaunchArgument('use_map_saver', default_value='true'),
-        DeclareLaunchArgument('map_save_timeout_sec', default_value='10.0'),
+        # Foxy nav2_map_server declares this parameter as an integer.
+        DeclareLaunchArgument('map_save_timeout_sec', default_value='10'),
+        DeclareLaunchArgument('max_laser_range', default_value='12.0'),
         SetEnvironmentVariable('QT_AUTO_SCREEN_SCALE_FACTOR', '0'),
         SetEnvironmentVariable('QT_SCALE_FACTOR', '0.8'),
         SetEnvironmentVariable('QT_FONT_DPI', '96'),
@@ -69,6 +73,9 @@ def generate_launch_description() -> LaunchDescription:
                 'odom_frame': 'odom',
                 'map_frame': 'map',
                 'scan_topic': scan_topic,
+                # Match the SLLidar A1 capability reported by the vehicle
+                # driver; the slam_toolbox default is 25 m.
+                'max_laser_range': ParameterValue(max_laser_range, value_type=float),
             }],
             output='screen',
         ),
@@ -77,7 +84,7 @@ def generate_launch_description() -> LaunchDescription:
             executable='map_saver_server',
             name='map_saver',
             parameters=[{
-                'save_map_timeout': map_save_timeout_sec,
+                'save_map_timeout': ParameterValue(map_save_timeout_sec, value_type=int),
                 'free_thresh_default': 0.25,
                 'occupied_thresh_default': 0.65,
             }],

@@ -37,6 +37,12 @@ main() {
 
   start_vendor_base_stack
   start_vendor_camera
+  if ! wait_for_topic /camera/color/image_raw 5 "${LOG_DIR}/camera.log"; then
+    echo "错误：巡检必须有 RGB 图像。当前 Astra 驱动未发布 /camera/color/image_raw。" >&2
+    echo "请先用正确的相机启动配置启用彩色流，再重新运行本脚本。" >&2
+    echo "可通过 CAMERA_CMD 覆盖，例如 Astra Pro Plus 常用的 astrapro 启动文件。" >&2
+    exit 1
+  fi
 
   start_background_args \
     "导航、巡检、视觉、健康监测和 APP 桥接" \

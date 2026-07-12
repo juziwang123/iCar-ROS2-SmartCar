@@ -63,6 +63,7 @@ def generate_launch_description() -> LaunchDescription:
     mapping_publish_base_link_tf = LaunchConfiguration('mapping_publish_base_link_tf')
     mapping_use_map_saver = LaunchConfiguration('mapping_use_map_saver')
     mapping_map_save_timeout_sec = LaunchConfiguration('mapping_map_save_timeout_sec')
+    mapping_max_laser_range = LaunchConfiguration('mapping_max_laser_range')
     use_navigation = LaunchConfiguration('use_navigation')
     navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
@@ -108,7 +109,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('mapping_publish_laser_tf', default_value='false'),
         DeclareLaunchArgument('mapping_publish_base_link_tf', default_value='false'),
         DeclareLaunchArgument('mapping_use_map_saver', default_value='true'),
-        DeclareLaunchArgument('mapping_map_save_timeout_sec', default_value='10.0'),
+        DeclareLaunchArgument('mapping_map_save_timeout_sec', default_value='10'),
+        DeclareLaunchArgument('mapping_max_laser_range', default_value='12.0'),
         DeclareLaunchArgument('use_navigation', default_value='false'),
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
@@ -270,6 +272,7 @@ def generate_launch_description() -> LaunchDescription:
                 'publish_base_link_tf': mapping_publish_base_link_tf,
                 'use_map_saver': mapping_use_map_saver,
                 'map_save_timeout_sec': mapping_map_save_timeout_sec,
+                'max_laser_range': mapping_max_laser_range,
             }.items(),
             condition=IfCondition(use_mapping),
         ),

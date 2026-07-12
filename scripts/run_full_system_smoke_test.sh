@@ -61,12 +61,45 @@ check_topic_message() {
     fail "话题 ${topic} 不存在（日志：${log_file}）"
     return
   fi
-  if timeout "${TOPIC_TIMEOUT}" ros2 topic echo --once "${topic}" \
-      --qos-reliability best_effort >"${log_file}.topic${topic//\//_}.log" 2>&1; then
+  if capture_topic_message "${topic}" "${log_file}.topic${topic//\//_}.log"; then
     pass "话题 ${topic} 有新鲜数据"
   else
     fail "话题 ${topic} 在 ${TOPIC_TIMEOUT} 内没有数据（日志：${log_file}）"
   fi
+}
+
+capture_topic_message() {
+  local topic=$1
+  local output_file=$2
+  local start_time child_pid
+  : >"${output_file}"
+  # ROS 2 Foxy has no single-message echo option. Start echo in the
+  # background, wait for its first bytes, then stop only the CLI process.
+  ros2 topic echo "${topic}" --qos-reliability best_effort >"${output_file}" 2>&1 &
+  child_pid=$!
+  start_time=$(date +%s)
+  while true; do
+    if [[ -s "${output_file}" ]]; then
+      if grep -Eqi '(^usage:|^ros2: error:|unrecognized arguments)' "${output_file}"; then
+        kill "${child_pid}" >/dev/null 2>&1 || true
+        wait "${child_pid}" >/dev/null 2>&1 || true
+        return 1
+      fi
+      kill "${child_pid}" >/dev/null 2>&1 || true
+      wait "${child_pid}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
+      wait "${child_pid}" >/dev/null 2>&1 || true
+      return 1
+    fi
+    if (( $(date +%s) - start_time >= TOPIC_TIMEOUT )); then
+      kill "${child_pid}" >/dev/null 2>&1 || true
+      wait "${child_pid}" >/dev/null 2>&1 || true
+      return 1
+    fi
+    sleep 0.1
+  done
 }
 
 check_topic_contains() {
@@ -78,13 +111,32 @@ check_topic_contains() {
     fail "话题 ${topic} 不存在（日志：${log_file}）"
     return
   fi
-  if timeout "${TOPIC_TIMEOUT}" ros2 topic echo --once "${topic}" \
-      --qos-reliability best_effort >"${output_file}" 2>&1 \
+  if capture_topic_message "${topic}" "${output_file}" \
       && grep -Fq "${expected}" "${output_file}"; then
     pass "话题 ${topic} 包含预期状态 ${expected}"
   else
     fail "话题 ${topic} 未报告预期状态 ${expected}（日志：${output_file}）"
   fi
+}
+
+check_lifecycle_active() {
+  local node=$1
+  local log_file=$2
+  local start_time state
+  start_time=$(date +%s)
+  while true; do
+    state=$(ros2 lifecycle get "${node}" 2>&1 || true)
+    if grep -Eqi 'active.*\[3\]|\[3\].*active' <<<"${state}"; then
+      pass "生命周期节点 ${node} 已激活"
+      return
+    fi
+    if (( $(date +%s) - start_time >= 20 )); then
+      printf '%s\n' "${state}" >>"${log_file}"
+      fail "生命周期节点 ${node} 未进入 active（日志：${log_file}）"
+      return
+    fi
+    sleep 1
+  done
 }
 
 check_action() {
@@ -237,6 +289,7 @@ main() {
     use_vision:=false use_app_bridge:=false
   check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_mapping.log"
   check_node /map_saver "${LOG_DIR}/smoke_mapping.log"
+  check_lifecycle_active /map_saver "${LOG_DIR}/smoke_mapping.log"
   check_topic_message /map "${LOG_DIR}/smoke_mapping.log"
   check_service /map_saver/save_map
 
@@ -253,6 +306,9 @@ main() {
   check_node /bt_navigator "${LOG_DIR}/smoke_navigation.log"
   check_node /controller_server "${LOG_DIR}/smoke_navigation.log"
   check_node /planner_server "${LOG_DIR}/smoke_navigation.log"
+  check_lifecycle_active /bt_navigator "${LOG_DIR}/smoke_navigation.log"
+  check_lifecycle_active /controller_server "${LOG_DIR}/smoke_navigation.log"
+  check_lifecycle_active /planner_server "${LOG_DIR}/smoke_navigation.log"
   check_topic_message /map "${LOG_DIR}/smoke_navigation.log"
   check_action /navigate_to_pose
 

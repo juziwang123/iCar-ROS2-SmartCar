@@ -32,7 +32,8 @@ APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 START_VENDOR_BRINGUP="${START_VENDOR_BRINGUP:-1}"
 ROBOT_TYPE="${ROBOT_TYPE:-x3}"
 RPLIDAR_TYPE="${RPLIDAR_TYPE:-a1}"
-VENDOR_BRINGUP_CMD="${VENDOR_BRINGUP_CMD:-ros2 launch car_bringup vendor_x3_base_no_joy.launch.py rplidar_type:=${RPLIDAR_TYPE}}"
+VENDOR_PUB_ODOM_TF="${VENDOR_PUB_ODOM_TF:-false}"
+VENDOR_BRINGUP_CMD="${VENDOR_BRINGUP_CMD:-ros2 launch car_bringup vendor_x3_base_no_joy.launch.py rplidar_type:=${RPLIDAR_TYPE} pub_odom_tf:=${VENDOR_PUB_ODOM_TF}}"
 
 # 如果不使用厂家完整 bringup，可以分开启动底盘/雷达。
 START_BASE_DRIVER="${START_BASE_DRIVER:-1}"
@@ -82,6 +83,7 @@ print_config() {
   echo "  APP 鉴权令牌    : $([[ -n "${APP_BRIDGE_TOKEN}" ]] && echo 已提供 || echo 未提供)"
   echo "  厂家完整启动    : ${START_VENDOR_BRINGUP}"
   echo "  车型/雷达       : ${ROBOT_TYPE} / ${RPLIDAR_TYPE}"
+  echo "  厂家 odom TF    : ${VENDOR_PUB_ODOM_TF}"
   echo "  启动底盘驱动    : ${START_BASE_DRIVER}"
   echo "  启动雷达驱动    : ${START_LIDAR}"
   echo "  启动 RViz       : ${USE_RVIZ}"

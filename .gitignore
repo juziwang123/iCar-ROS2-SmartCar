@@ -28,3 +28,6 @@ COLCON_IGNORE
 # Local YOLO weights can be very large and are deployed separately.
 src/car_vision/models/*
 !src/car_vision/models/.gitkeep
+
+# logs
+logs_backup/
