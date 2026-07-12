@@ -232,10 +232,19 @@ start_vendor_base_stack() {
 
 start_vendor_camera() {
   local start_camera="${START_CAMERA:-1}"
+  local start_v4l2_bridge="${START_V4L2_BRIDGE:-0}"
   local camera_cmd="${CAMERA_CMD:-ros2 launch astra_camera astra.launch.xml enable_ir:=false enable_color:=true}"
 
   if [[ "${start_camera}" == "1" ]]; then
     start_background_command "相机驱动" "${LOG_DIR}/camera.log" "${camera_cmd}"
     wait_for_topic /camera/color/image_raw 25 "${LOG_DIR}/camera.log" || true
+  fi
+
+  if [[ "${start_v4l2_bridge}" == "1" ]]; then
+    start_background_command \
+      "V4L2 彩色相机桥接" \
+      "${LOG_DIR}/camera_bridge.log" \
+      "ros2 run car_vision camera_bridge"
+    wait_for_topic /camera/color/image_raw 15 "${LOG_DIR}/camera_bridge.log" || true
   fi
 }

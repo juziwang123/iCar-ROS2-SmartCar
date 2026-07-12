@@ -46,6 +46,7 @@ def generate_launch_description() -> LaunchDescription:
     use_lidar_tracker = LaunchConfiguration('use_lidar_tracker')
     use_lidar_warning = LaunchConfiguration('use_lidar_warning')
     use_vision = LaunchConfiguration('use_vision')
+    vision_use_camera_bridge = LaunchConfiguration('vision_use_camera_bridge')
     use_color_detector = LaunchConfiguration('use_color_detector')
     use_color_tracker = LaunchConfiguration('use_color_tracker')
     use_yolo = LaunchConfiguration('use_yolo')
@@ -93,6 +94,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_lidar_tracker', default_value='false'),
         DeclareLaunchArgument('use_lidar_warning', default_value='false'),
         DeclareLaunchArgument('use_vision', default_value='false'),
+        DeclareLaunchArgument('vision_use_camera_bridge', default_value='true'),
         DeclareLaunchArgument('use_color_detector', default_value='true'),
         DeclareLaunchArgument('use_color_tracker', default_value='false'),
         DeclareLaunchArgument('use_yolo', default_value='false'),
@@ -231,6 +233,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
             launch_arguments={
                 'params_file': vision_params_file,
+                'use_camera_bridge': vision_use_camera_bridge,
                 'use_color_detector': use_color_detector,
                 'use_color_tracker': use_color_tracker,
                 'use_yolo': use_yolo,

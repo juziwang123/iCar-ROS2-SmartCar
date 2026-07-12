@@ -271,7 +271,7 @@ main() {
 
   # 厂家底盘/雷达和相机只启动一次；其余工程节点在每个互斥阶段重启。
   start_vendor_base_stack
-  start_vendor_camera
+  START_V4L2_BRIDGE=1 start_vendor_camera
   check_topic_message /scan "${LOG_DIR}/vendor_bringup.log"
   check_topic_message /odom "${LOG_DIR}/vendor_bringup.log"
   local camera_ready=false
@@ -285,7 +285,7 @@ main() {
     use_lidar_avoidance:=true \
     use_lidar_warning:=true \
     use_mapping:=false use_navigation:=false use_patrol:=false \
-    use_vision:=false use_app_bridge:=false
+    use_vision:=false vision_use_camera_bridge:=false use_app_bridge:=false
   check_node /safety_mux "${LOG_DIR}/smoke_control_lidar.log"
   check_node /lidar_avoidance "${LOG_DIR}/smoke_control_lidar.log"
   check_node /lidar_warning "${LOG_DIR}/smoke_control_lidar.log"
@@ -302,7 +302,7 @@ main() {
       use_keyboard:=false \
       use_lidar_avoidance:=false \
       use_mapping:=false use_navigation:=false use_patrol:=false \
-      use_vision:=true use_color_detector:=true use_color_tracker:=false \
+      use_vision:=true vision_use_camera_bridge:=false use_color_detector:=true use_color_tracker:=false \
       use_yolo:=false use_app_bridge:=false
     check_node /color_detector "${LOG_DIR}/smoke_vision_color.log"
     check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_color.log"
@@ -316,7 +316,7 @@ main() {
       use_keyboard:=false \
       use_lidar_avoidance:=false \
       use_mapping:=false use_navigation:=false use_patrol:=false \
-      use_vision:=true use_color_detector:=false use_color_tracker:=false \
+      use_vision:=true vision_use_camera_bridge:=false use_color_detector:=false use_color_tracker:=false \
       use_yolo:=true use_app_bridge:=false
     check_node /yolo_detector "${LOG_DIR}/smoke_vision_yolo.log"
     check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_yolo.log"
@@ -328,7 +328,7 @@ main() {
   start_project mapping \
     use_keyboard:=false use_lidar_avoidance:=false \
     use_mapping:=true use_navigation:=false use_patrol:=false \
-    use_vision:=false use_app_bridge:=false
+    use_vision:=false vision_use_camera_bridge:=false use_app_bridge:=false
   check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_mapping.log"
   check_node /map_saver "${LOG_DIR}/smoke_mapping.log"
   check_lifecycle_active /map_saver "${LOG_DIR}/smoke_mapping.log"
@@ -341,7 +341,7 @@ main() {
   local nav_args=(
     use_keyboard:=false use_lidar_avoidance:=true
     use_mapping:=false use_navigation:=true use_mission:=false use_patrol:=false
-    use_vision:=false use_app_bridge:=false
+    use_vision:=false vision_use_camera_bridge:=false use_app_bridge:=false
   )
   if [[ -n "${MAP}" ]]; then
     nav_args+=("map:=${MAP}")
@@ -367,7 +367,7 @@ main() {
   local mission_args=(
     use_keyboard:=false use_lidar_avoidance:=true
     use_mapping:=false use_navigation:=true use_mission:=true use_patrol:=false
-    use_inspection:=true use_vision:=true use_color_detector:=true
+    use_inspection:=true use_vision:=true vision_use_camera_bridge:=false use_color_detector:=true
     use_yolo:="${WITH_YOLO}" use_app_bridge:=true
     mission_require_localization:=true
   )

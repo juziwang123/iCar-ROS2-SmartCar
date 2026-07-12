@@ -28,6 +28,7 @@ setup(
             'color_detector = car_vision.color_detector:main',
             'color_tracker = car_vision.color_tracker:main',
             'yolo_detector = car_vision.yolo_detector:main',
+            'camera_bridge = car_vision.camera_bridge:main',
         ],
     },
 )

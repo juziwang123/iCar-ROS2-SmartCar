@@ -9,6 +9,7 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description() -> LaunchDescription:
     params_file = LaunchConfiguration('params_file')
     use_color_detector = LaunchConfiguration('use_color_detector')
+    use_camera_bridge = LaunchConfiguration('use_camera_bridge')
     use_color_tracker = LaunchConfiguration('use_color_tracker')
     use_yolo = LaunchConfiguration('use_yolo')
     yolo_model_path = LaunchConfiguration('yolo_model_path')
@@ -16,6 +17,7 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription([
         DeclareLaunchArgument('use_color_detector', default_value='true'),
+        DeclareLaunchArgument('use_camera_bridge', default_value='true'),
         DeclareLaunchArgument('use_color_tracker', default_value='false'),
         DeclareLaunchArgument('use_yolo', default_value='false'),
         DeclareLaunchArgument('yolo_model_path', default_value='models/model.pt'),
@@ -27,6 +29,14 @@ def generate_launch_description() -> LaunchDescription:
                 'config',
                 'vision.yaml',
             ]),
+        ),
+        Node(
+            package='car_vision',
+            executable='camera_bridge',
+            name='camera_bridge',
+            parameters=[params_file],
+            condition=IfCondition(use_camera_bridge),
+            output='screen',
         ),
         Node(
             package='car_vision',

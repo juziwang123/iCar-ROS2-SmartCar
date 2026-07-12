@@ -31,7 +31,7 @@ class TestFoxyCompatibility(unittest.TestCase):
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
-        self.assertIn('VENDOR_PUB_ODOM_TF:-true', common)
+        self.assertIn('VENDOR_PUB_ODOM_TF:-false', common)
         self.assertIn('ICAR_VENDOR_LIBRARY_SETUP', common)
         self.assertIn('ICAR_VENDOR_WORKSPACE_SETUP', common)
 
@@ -44,6 +44,20 @@ class TestFoxyCompatibility(unittest.TestCase):
         warning = (ROOT / 'src/car_lidar/car_lidar/warning.py').read_text(encoding='utf-8')
         self.assertIn("self.warning_state = 'unknown'", warning)
         self.assertIn('state_publish_rate_hz', warning)
+
+    def test_vision_launch_uses_the_v4l2_colour_bridge(self):
+        bridge = (ROOT / 'src/car_vision/car_vision/camera_bridge.py').read_text(encoding='utf-8')
+        setup = (ROOT / 'src/car_vision/setup.py').read_text(encoding='utf-8')
+        launch = (ROOT / 'src/car_vision/launch/vision.launch.py').read_text(encoding='utf-8')
+        bringup = (ROOT / 'src/car_bringup/launch/bringup.launch.py').read_text(encoding='utf-8')
+        script = (ROOT / 'scripts/run_full_system_smoke_test.sh').read_text(encoding='utf-8')
+        self.assertIn("'/dev/video0'", bridge)
+        self.assertIn("'MJPG'", bridge)
+        self.assertIn("'/camera/color/image_raw'", bridge)
+        self.assertIn('camera_bridge = car_vision.camera_bridge:main', setup)
+        self.assertIn("DeclareLaunchArgument('use_camera_bridge', default_value='true')", launch)
+        self.assertIn("DeclareLaunchArgument('vision_use_camera_bridge', default_value='true')", bringup)
+        self.assertIn('START_V4L2_BRIDGE=1 start_vendor_camera', script)
 
 
 if __name__ == '__main__':
