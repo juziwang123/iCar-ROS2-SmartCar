@@ -23,6 +23,7 @@ class WarningNode(Node):
         self.declare_parameter('front_center_deg', 180.0)
         self.declare_parameter('enable_control', False)
         self.declare_parameter('turn_speed', 0.5)
+        self.declare_parameter('state_publish_rate_hz', 5.0)
 
         self.warning_distance = float(self.get_parameter('warning_distance').value)
         self.clear_distance = float(self.get_parameter('clear_distance').value)
@@ -32,6 +33,10 @@ class WarningNode(Node):
         self.enable_control = bool(self.get_parameter('enable_control').value)
         self.turn_speed = float(self.get_parameter('turn_speed').value)
         self.warning_active = False
+        # Do not report a safe state until a scan has been evaluated. The
+        # heartbeat still lets monitoring distinguish a live warning node
+        # from a missing publisher while the lidar warms up.
+        self.warning_state = 'unknown'
 
         self.warning_publisher = self.create_publisher(Bool, str(self.get_parameter('warning_topic').value), 10)
         self.state_publisher = self.create_publisher(String, str(self.get_parameter('state_topic').value), 10)
@@ -39,6 +44,10 @@ class WarningNode(Node):
         self.cmd_publisher = self.create_publisher(Twist, str(self.get_parameter('output_topic').value), 10)
         self.override_publisher = self.create_publisher(Bool, str(self.get_parameter('override_topic').value), 10)
         self.create_subscription(LaserScan, str(self.get_parameter('scan_topic').value), self._on_scan, 10)
+        self.create_timer(
+            1.0 / max(0.1, float(self.get_parameter('state_publish_rate_hz').value)),
+            self._publish_state,
+        )
         self.get_logger().info(
             f'Lidar warning started: front_center_deg={self.front_center_deg}, '
             f'warning_distance={self.warning_distance}'
@@ -57,7 +66,8 @@ class WarningNode(Node):
             state = f'warning front={front:.2f} {side}'
 
         self.warning_publisher.publish(Bool(data=self.warning_active))
-        self.state_publisher.publish(String(data=state))
+        self.warning_state = state
+        self._publish_state()
         self.buzzer_publisher.publish(Bool(data=self.warning_active))
 
         if self.enable_control:
@@ -66,6 +76,9 @@ class WarningNode(Node):
                 command.angular.z = self.turn_speed if left >= right else -self.turn_speed
             self.cmd_publisher.publish(command)
             self.override_publisher.publish(Bool(data=self.warning_active))
+
+    def _publish_state(self) -> None:
+        self.state_publisher.publish(String(data=self.warning_state))
 
     def _extract_distances(self, msg: LaserScan) -> Tuple[Optional[float], float, float]:
         front_samples: List[float] = []

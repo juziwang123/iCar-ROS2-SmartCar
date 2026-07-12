@@ -38,6 +38,11 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('TimerAction(', mapping_launch)
         self.assertIn('period=1.0', mapping_launch)
 
+    def test_lidar_warning_publishes_a_startup_state_heartbeat(self):
+        warning = (ROOT / 'src/car_lidar/car_lidar/warning.py').read_text(encoding='utf-8')
+        self.assertIn("self.warning_state = 'unknown'", warning)
+        self.assertIn('state_publish_rate_hz', warning)
+
 
 if __name__ == '__main__':
     unittest.main()
