@@ -31,7 +31,7 @@ class TestFoxyCompatibility(unittest.TestCase):
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
-        self.assertIn('VENDOR_PUB_ODOM_TF:-false', common)
+        self.assertIn('VENDOR_PUB_ODOM_TF:-true', common)
         self.assertIn('ICAR_VENDOR_LIBRARY_SETUP', common)
         self.assertIn('ICAR_VENDOR_WORKSPACE_SETUP', common)
         self.assertIn('enable_color:=false', common)

@@ -207,7 +207,10 @@ start_vendor_base_stack() {
   # The vendor base node is the authoritative source for it; disabling it
   # leaves /odom available but makes both mapping and navigation unable to
   # transform incoming scans.
-  local vendor_pub_odom_tf="${VENDOR_PUB_ODOM_TF:-false}"
+  # The factory base node is the authoritative odom -> base_footprint
+  # publisher.  SLAM and Nav2 require that transform even when the vehicle
+  # remains stationary during a smoke test, so keep it enabled by default.
+  local vendor_pub_odom_tf="${VENDOR_PUB_ODOM_TF:-true}"
   local vendor_bringup_cmd="${VENDOR_BRINGUP_CMD:-ros2 launch car_bringup vendor_x3_base_no_joy.launch.py rplidar_type:=${rplidar_type} pub_odom_tf:=${vendor_pub_odom_tf}}"
   local base_driver_cmd="${BASE_DRIVER_CMD:-ros2 run icar_bringup Mcnamu_driver_X3}"
   local lidar_cmd="${LIDAR_CMD:-ros2 launch sllidar_ros2 sllidar_launch.py}"
