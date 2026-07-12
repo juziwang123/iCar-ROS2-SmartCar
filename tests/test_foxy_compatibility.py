@@ -28,6 +28,10 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('check_topic /map "${LOG_DIR}/smoke_mapping.log"', script)
         self.assertIn('check_topic /map "${LOG_DIR}/smoke_navigation.log"', script)
         self.assertIn('check_topic_message /cmd_vel "${LOG_DIR}/smoke_control_lidar.log"', script)
+        self.assertIn('GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-2}"', script)
+        self.assertIn('ros2 service list --no-daemon --spin-time', script)
+        common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
+        self.assertIn('ros2 node list --no-daemon --spin-time', common)
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')

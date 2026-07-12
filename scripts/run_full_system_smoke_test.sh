@@ -20,6 +20,7 @@ source "$(cd "$(dirname "$0")" && pwd)/common_real_car.sh"
 WITH_YOLO="${WITH_YOLO:-false}"
 SKIP_UNIT_TESTS="${SKIP_UNIT_TESTS:-false}"
 TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-8}"
+GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-2}"
 MAP="${MAP:-}"
 APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 FAILURES=0
@@ -60,7 +61,10 @@ check_package() {
 check_node() {
   local node=$1
   local log_file=$2
-  if wait_for_node "${node}" 20 "${log_file}"; then
+  # Foxy's long-running ros2 daemon can retain a stale graph while launch
+  # processes are repeatedly started and stopped by this test.  Force a
+  # short, fresh discovery pass so lifecycle nodes are not reported missing.
+  if wait_for_node "${node}" 20 "${log_file}" "${GRAPH_DISCOVERY_SPIN_TIME}"; then
     pass "节点 ${node}"
   else
     fail "节点 ${node} 未就绪（日志：${log_file}）"
@@ -179,7 +183,8 @@ check_action() {
 
 check_service() {
   local service=$1
-  if ros2 service list 2>/dev/null | grep -qx "${service}"; then
+  if ros2 service list --no-daemon --spin-time "${GRAPH_DISCOVERY_SPIN_TIME}" 2>/dev/null \
+      | grep -qx "${service}"; then
     pass "Service ${service}"
   else
     fail "Service ${service} 未注册"
