@@ -11,6 +11,7 @@
 # 常用可选参数：
 #   USE_RVIZ=true bash scripts/start_real_mapping_keyboard.sh
 #   USE_LIDAR_AVOIDANCE=true bash scripts/start_real_mapping_keyboard.sh
+#   APP_BRIDGE_PORT=8765 bash scripts/start_real_mapping_keyboard.sh
 #   START_BASE_DRIVER=0 bash scripts/start_real_mapping_keyboard.sh
 #   START_LIDAR=0 bash scripts/start_real_mapping_keyboard.sh
 
@@ -23,7 +24,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 ROS_DISTRO_NAME="${ROS_DISTRO:-foxy}"
 LOG_DIR="${ROOT_DIR}/.run_logs"
-MAP_SAVE_PREFIX="${MAP_SAVE_PREFIX:-${ROOT_DIR}/src/car_navigation/maps/lab_map}"
+MAP_NAME="${MAP_NAME:-lab_map}"
+APP_BRIDGE_PORT="${APP_BRIDGE_PORT:-8765}"
+APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 
 # 默认使用本项目封装的厂家基础 bringup：启动底盘、里程计/EKF、雷达和必要 TF，但不启动厂家 joy_ctrl。
 START_VENDOR_BRINGUP="${START_VENDOR_BRINGUP:-1}"
@@ -74,7 +77,9 @@ print_config() {
   echo "  ROS 版本        : ${ROS_DISTRO_NAME}"
   echo "  工作空间        : ${ROOT_DIR}"
   echo "  日志目录        : ${LOG_DIR}"
-  echo "  地图保存前缀    : ${MAP_SAVE_PREFIX}"
+  echo "  地图名称        : ${MAP_NAME}"
+  echo "  APP 桥接端口    : ${APP_BRIDGE_PORT}"
+  echo "  APP 鉴权令牌    : $([[ -n "${APP_BRIDGE_TOKEN}" ]] && echo 已提供 || echo 未提供)"
   echo "  厂家完整启动    : ${START_VENDOR_BRINGUP}"
   echo "  车型/雷达       : ${ROBOT_TYPE} / ${RPLIDAR_TYPE}"
   echo "  启动底盘驱动    : ${START_BASE_DRIVER}"
@@ -227,11 +232,12 @@ wait_for_node() {
 publish_stop() {
   local i
   for i in 1 2 3; do
-    ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    # Keep final /cmd_vel exclusively owned by motion_controller.
     ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    ros2 topic pub --once /control/cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_vision geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     sleep 0.1
   done
   ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
@@ -326,12 +332,7 @@ cleanup() {
   echo
   echo "建图流程已结束。"
   echo
-  echo "如果地图效果满意，请执行下面的命令保存地图："
-  echo "  ros2 run nav2_map_server map_saver_cli -f ${MAP_SAVE_PREFIX}"
-  echo
-  echo "地图会保存为："
-  echo "  ${MAP_SAVE_PREFIX}.yaml"
-  echo "  ${MAP_SAVE_PREFIX}.pgm"
+  echo "地图保存必须在建图脚本仍运行时完成；下次建图请使用受管理 map_save 接口。"
   echo
   echo "本次运行日志目录："
   echo "  ${LOG_DIR}"
@@ -396,7 +397,9 @@ main() {
       use_lidar_avoidance:="${USE_LIDAR_AVOIDANCE}" \
       use_lidar_tracker:=false \
       use_navigation:=false \
-      use_patrol:=false
+      use_patrol:=false \
+      use_app_bridge:=true \
+      app_bridge_port:="${APP_BRIDGE_PORT}"
 
   wait_for_node /safety_mux 20 "${LOG_DIR}/bringup_mapping.log" || true
   if [[ "${USE_LIDAR_AVOIDANCE}" == "true" ]]; then
@@ -404,10 +407,15 @@ main() {
     start_lidar_avoidance_notice_monitor
   fi
   wait_for_node /sync_slam_toolbox_node 20 "${LOG_DIR}/bringup_mapping.log" || true
+  wait_for_node /app_server 20 "${LOG_DIR}/bringup_mapping.log" || true
 
   echo "准备完成，现在进入键盘遥控。"
   echo "请低速移动小车，让雷达逐步扫完整个场地。"
   echo "想查看建图效果，可在另一个终端运行 rviz2，并添加 /map、/scan、/tf、/odom。"
+  echo "完成扫图后，不要停止本脚本；在另一个终端保存受管理地图："
+  echo "  python3 scripts/app_bridge_client.py --host 127.0.0.1 --port ${APP_BRIDGE_PORT}"
+  echo "    --request '{\"cmd\":\"map_save\",\"name\":\"${MAP_NAME}\"}'"
+  echo "若 APP 配置了 auth_token，请在命令中追加 --token '<token>'。"
   echo
 
   ros2 run car_control keyboard_teleop

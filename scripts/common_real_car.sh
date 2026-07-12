@@ -132,11 +132,14 @@ wait_for_node() {
 publish_stop() {
   local i
   for i in 1 2 3; do
-    ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    # Never publish to /cmd_vel or /control/cmd_vel here: those are the
+    # protected final outputs owned by motion_controller and safety_mux.
+    # Sending zero only to mux inputs preserves the single safety outlet.
     ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    ros2 topic pub --once /control/cmd_vel geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    ros2 topic pub --once /cmd_vel_vision geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     sleep 0.1
   done
   ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
