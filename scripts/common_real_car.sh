@@ -233,7 +233,10 @@ start_vendor_base_stack() {
 start_vendor_camera() {
   local start_camera="${START_CAMERA:-1}"
   local start_v4l2_bridge="${START_V4L2_BRIDGE:-0}"
-  local camera_cmd="${CAMERA_CMD:-ros2 launch astra_camera astra.launch.xml enable_ir:=false enable_color:=true}"
+  # This Astra firmware exposes RGB through its UVC /dev/video0 endpoint.
+  # Keep that endpoint exclusively for camera_bridge; astra_camera remains
+  # responsible for the depth stream.
+  local camera_cmd="${CAMERA_CMD:-ros2 launch astra_camera astra.launch.xml enable_ir:=false enable_color:=false}"
 
   if [[ "${start_camera}" == "1" ]]; then
     start_background_command "相机驱动" "${LOG_DIR}/camera.log" "${camera_cmd}"

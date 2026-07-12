@@ -34,6 +34,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('VENDOR_PUB_ODOM_TF:-false', common)
         self.assertIn('ICAR_VENDOR_LIBRARY_SETUP', common)
         self.assertIn('ICAR_VENDOR_WORKSPACE_SETUP', common)
+        self.assertIn('enable_color:=false', common)
 
     def test_map_saver_lifecycle_manager_starts_after_server_registration(self):
         mapping_launch = (ROOT / 'src/car_navigation/launch/mapping.launch.py').read_text(encoding='utf-8')
