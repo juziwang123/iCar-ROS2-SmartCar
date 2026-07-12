@@ -11,6 +11,8 @@ PGIDS=()
 source_ros_environment() {
   local ros_setup="/opt/ros/${ROS_DISTRO_NAME}/setup.bash"
   local workspace_setup="${ROOT_DIR}/install/setup.bash"
+  local vendor_library_setup="${ICAR_VENDOR_LIBRARY_SETUP:-/root/icar_ros2_ws/software/library_ws/install/setup.bash}"
+  local vendor_workspace_setup="${ICAR_VENDOR_WORKSPACE_SETUP:-/root/icar_ros2_ws/icar_ws/install/setup.bash}"
 
   if [[ ! -f "${ros_setup}" ]]; then
     echo "错误：找不到 ${ros_setup}。请设置 ROS_DISTRO，或先手动加载 ROS 环境。" >&2
@@ -25,6 +27,16 @@ source_ros_environment() {
   set +u
   # shellcheck source=/dev/null
   source "${ros_setup}"
+  # The factory packages (Astra, lidar, base driver and robot description)
+  # live in two vendor overlays rather than this repository. A selective
+  # colcon build rewrites this workspace's setup files, so source those
+  # overlays explicitly before the project overlay is applied.
+  for vendor_setup in "${vendor_library_setup}" "${vendor_workspace_setup}"; do
+    if [[ -f "${vendor_setup}" ]]; then
+      # shellcheck source=/dev/null
+      source "${vendor_setup}"
+    fi
+  done
   # shellcheck source=/dev/null
   source "${workspace_setup}"
   set -u
