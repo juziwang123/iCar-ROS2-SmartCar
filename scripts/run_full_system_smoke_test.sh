@@ -287,11 +287,14 @@ main() {
     use_mapping:=false use_navigation:=false use_patrol:=false \
     use_vision:=false use_app_bridge:=false
   check_node /safety_mux "${LOG_DIR}/smoke_control_lidar.log"
-  check_node /motion_controller "${LOG_DIR}/smoke_control_lidar.log"
   check_node /lidar_avoidance "${LOG_DIR}/smoke_control_lidar.log"
   check_node /lidar_warning "${LOG_DIR}/smoke_control_lidar.log"
   check_topic_message /control/effective_estop "${LOG_DIR}/smoke_control_lidar.log"
   check_topic_message /control/cmd_vel "${LOG_DIR}/smoke_control_lidar.log"
+  # The motion-controller process can appear in the ROS graph after its
+  # protected output is already live. Testing the final zero-velocity topic
+  # is both less discovery-sensitive and verifies the actual safety outlet.
+  check_topic_message /cmd_vel "${LOG_DIR}/smoke_control_lidar.log"
   check_topic_message /lidar/warning_state "${LOG_DIR}/smoke_control_lidar.log"
 
   if [[ "${camera_ready}" == "true" ]]; then

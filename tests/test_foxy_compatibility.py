@@ -27,6 +27,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('--qos-durability "${durability}"', script)
         self.assertIn('check_topic /map "${LOG_DIR}/smoke_mapping.log"', script)
         self.assertIn('check_topic /map "${LOG_DIR}/smoke_navigation.log"', script)
+        self.assertIn('check_topic_message /cmd_vel "${LOG_DIR}/smoke_control_lidar.log"', script)
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
