@@ -232,7 +232,7 @@ start_vendor_base_stack() {
 
 start_vendor_camera() {
   local start_camera="${START_CAMERA:-1}"
-  local camera_cmd="${CAMERA_CMD:-ros2 launch astra_camera astra.launch.xml}"
+  local camera_cmd="${CAMERA_CMD:-ros2 launch astra_camera astra.launch.xml enable_ir:=false enable_color:=true}"
 
   if [[ "${start_camera}" == "1" ]]; then
     start_background_command "相机驱动" "${LOG_DIR}/camera.log" "${camera_cmd}"
