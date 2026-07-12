@@ -24,4 +24,9 @@ setup(
     description='Bringup launch files for the iCar ROS2 smart car.',
     license='MIT',
     tests_require=['pytest'],
+    entry_points={
+        'console_scripts': [
+            'icar = car_bringup.icar_cli:main',
+        ],
+    },
 )
