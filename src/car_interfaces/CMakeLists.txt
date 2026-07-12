@@ -7,6 +7,7 @@ find_package(std_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/ExecutePatrol.action"
+  "action/VerifyCheckpoint.action"
   "msg/MissionStatus.msg"
   "msg/PatrolEvent.msg"
   "srv/MissionControl.srv"

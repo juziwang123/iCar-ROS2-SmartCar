@@ -80,6 +80,32 @@ class TestRouteSchema(unittest.TestCase):
         with self.assertRaises(RouteValidationError):
             parse_route(data)
 
+    def test_visual_marker_checkin_is_normalized(self):
+        data = sample_route()
+        data['checkpoints'][0]['checkin'] = {
+            'method': 'visual_marker',
+            'marker_type': 'qr',
+            'expected_marker_id': 'ICAR:CP-01',
+            'timeout_sec': 8.0,
+            'retries': 1,
+            'confirmation_frames': 2,
+        }
+        data['checkpoints'][0]['failure_policy']['checkin'] = 'retry_then_wait_operator'
+        route = parse_route(data)
+        checkin = route.checkpoints[0].checkin
+        self.assertEqual(checkin.method, 'visual_marker')
+        self.assertEqual(checkin.expected_marker_id, 'ICAR:CP-01')
+        self.assertEqual(route.checkpoints[0].checkin_failure_policy, 'retry_then_wait_operator')
+
+    def test_visual_marker_requires_expected_id(self):
+        data = sample_route()
+        data['checkpoints'][0]['checkin'] = {
+            'method': 'visual_marker',
+            'marker_type': 'qr',
+        }
+        with self.assertRaises(RouteValidationError):
+            parse_route(data)
+
 
 class TestMissionStateMachine(unittest.TestCase):
     def test_happy_path_reaches_completed(self):
@@ -89,6 +115,7 @@ class TestMissionStateMachine(unittest.TestCase):
             MissionState.LOCALIZING,
             MissionState.NAVIGATING,
             MissionState.ARRIVAL_CONFIRMING,
+            MissionState.CHECKING_IN,
             MissionState.RECORDING,
             MissionState.COMPLETED,
         ):
@@ -160,6 +187,20 @@ class TestRepositories(unittest.TestCase):
             self.assertEqual(mission['state'], 'NAVIGATING')
             self.assertEqual(mission['retry_count'], 1)
             self.assertEqual(missions.list_events('mission-1')[0]['code'], 'NAV_GOAL_SENT')
+            missions.record_checkin(
+                'mission-1',
+                checkpoint_id='CP-01',
+                attempt=1,
+                method='visual_marker',
+                outcome='VISUAL_MARKER_VERIFIED',
+                success=True,
+                marker_type='qr',
+                marker_id='ICAR:CP-01',
+                confirmation_count=2,
+                evidence_path='/tmp/evidence.jpg',
+                detail='verified',
+            )
+            self.assertEqual(missions.list_checkins('mission-1')[0]['marker_id'], 'ICAR:CP-01')
             self.assertEqual(routes.delete('lab_route'), 1)
             with self.assertRaises(RouteNotFoundError):
                 routes.load('lab_route')

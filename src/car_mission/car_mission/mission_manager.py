@@ -1,9 +1,4 @@
-"""Action-driven, persistent Nav2 patrol mission manager.
-
-P1 intentionally stops after navigation arrival and records the checkpoint.
-Visual check-in and inspection actions will be inserted between
-``ARRIVAL_CONFIRMING`` and ``RECORDING`` in later phases.
-"""
+"""Action-driven, persistent Nav2 patrol mission manager with P3 check-ins."""
 
 from __future__ import annotations
 
@@ -15,11 +10,11 @@ from typing import Any, Optional, Sequence
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from car_interfaces.action import ExecutePatrol
+from car_interfaces.action import ExecutePatrol, VerifyCheckpoint
 from car_interfaces.msg import MissionStatus, PatrolEvent
 from car_interfaces.srv import MissionControl
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
-from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -45,10 +40,12 @@ class MissionRuntime:
     failed_checkpoints: int = 0
     skipped_checkpoints: int = 0
     retry_count: int = 0
+    checkin_attempt: int = 0
     pause_requested: bool = False
     cancel_requested: bool = False
     estop_active: bool = False
     active_nav_goal_handle: Optional[Any] = None
+    active_checkin_goal_handle: Optional[Any] = None
     resume_future: Optional[Future] = None
 
 
@@ -100,6 +97,12 @@ class MissionManager(Node):
             str(self.get_parameter('navigation_action').value),
             self._callback_group,
         )
+        self.checkpoint_verifier = ActionClient(
+            self,
+            VerifyCheckpoint,
+            str(self.get_parameter('checkin_action').value),
+            callback_group=self._callback_group,
+        )
         self.action_server = ActionServer(
             self,
             ExecutePatrol,
@@ -135,6 +138,8 @@ class MissionManager(Node):
         self.declare_parameter('localization_max_age_sec', 2.0)
         self.declare_parameter('nav_server_timeout_sec', 2.0)
         self.declare_parameter('max_nav_retries', 2)
+        self.declare_parameter('checkin_action', 'verify_checkpoint')
+        self.declare_parameter('checkin_server_timeout_sec', 2.0)
 
     def _import_configured_route(self) -> None:
         route_file = str(self.get_parameter('route_file').value).strip()
@@ -247,16 +252,37 @@ class MissionManager(Node):
                     'NAVIGATION_SUCCEEDED',
                     f'Nav2 reached {checkpoint.checkpoint_id}',
                 )
-                # P3 will add geofence/visual check-in here. P1 records a
-                # successful Nav2 arrival so the execution loop is usable now.
+                checkin_outcome = await self._verify_checkpoint(runtime, checkpoint)
+                if checkin_outcome == 'cancelled':
+                    return self._finalize_cancelled(runtime, 'Mission cancelled during checkpoint check-in')
+                if checkin_outcome == 'failed':
+                    runtime.failed_checkpoints += 1
+                    return self._finalize_failed(runtime, f'Check-in failed at {checkpoint.checkpoint_id}')
+                if checkin_outcome == 'restart_navigation':
+                    # A pause, emergency stop, or operator decision always
+                    # re-enters the checkpoint through Nav2 rather than
+                    # trusting a stale arrival/marker observation.
+                    continue
                 self._transition(
                     runtime,
                     MissionState.RECORDING,
                     'CHECKPOINT_RECORDED',
-                    f'Navigation arrival recorded for {checkpoint.checkpoint_id}',
+                    f'Checkpoint {checkpoint.checkpoint_id} recorded after {checkin_outcome}',
                 )
                 runtime.completed_checkpoints += 1
-                self._record_checkpoint(runtime, checkpoint, 'CHECKPOINT_COMPLETED', 'Navigation arrival completed')
+                code = (
+                    'CHECKPOINT_COMPLETED_WITH_CHECKIN_FAILURE'
+                    if checkin_outcome == 'continued_after_failure'
+                    else 'CHECKPOINT_COMPLETED'
+                )
+                self._record_checkpoint(
+                    runtime,
+                    checkpoint,
+                    code,
+                    f'Checkpoint completed after {checkin_outcome}',
+                )
+                runtime.retry_count = 0
+                runtime.checkin_attempt = 0
                 runtime.checkpoint_index += 1
         except Exception as exc:
             self.get_logger().error(f'Mission {runtime.mission_id} failed: {exc}')
@@ -347,6 +373,206 @@ class MissionManager(Node):
             )
             if outcome != 'retry':
                 return outcome
+
+    async def _verify_checkpoint(self, runtime: MissionRuntime, checkpoint: Checkpoint) -> str:
+        """Run the P3 proof action after Nav2 has reached a checkpoint."""
+        checkin = checkpoint.checkin
+        self._transition(
+            runtime,
+            MissionState.CHECKING_IN,
+            'CHECKIN_STARTED',
+            f'Starting {checkin.method} check-in for {checkpoint.checkpoint_id}',
+        )
+        if checkin.method == 'none':
+            self._persist_checkin(
+                runtime,
+                checkpoint,
+                success=True,
+                outcome='NOT_REQUIRED',
+                marker_id='',
+                confirmation_count=0,
+                evidence_path='',
+                detail='No P3 check-in method is configured for this checkpoint',
+            )
+            return 'not_required'
+
+        while True:
+            if self._cancel_requested(runtime):
+                return 'cancelled'
+            if runtime.pause_requested or runtime.estop_active:
+                return 'restart_navigation'
+            if not self.checkpoint_verifier.wait_for_server(
+                timeout_sec=float(self.get_parameter('checkin_server_timeout_sec').value)
+            ):
+                outcome = await self._handle_checkin_failure(
+                    runtime,
+                    checkpoint,
+                    action_outcome='VERIFIER_UNAVAILABLE',
+                    marker_id='',
+                    confirmation_count=0,
+                    evidence_path='',
+                    detail='verify_checkpoint action server is unavailable',
+                )
+                if outcome == 'retry':
+                    continue
+                return outcome
+
+            goal = VerifyCheckpoint.Goal()
+            goal.mission_id = runtime.mission_id
+            goal.checkpoint_id = checkpoint.checkpoint_id
+            goal.target_x = checkpoint.pose.x
+            goal.target_y = checkpoint.pose.y
+            goal.target_yaw = checkpoint.pose.yaw
+            goal.position_tolerance_m = checkpoint.position_tolerance_m
+            goal.yaw_tolerance_rad = checkpoint.yaw_tolerance_rad
+            goal.max_pose_covariance = checkpoint.max_pose_covariance
+            goal.dwell_sec = checkpoint.dwell_sec
+            goal.method = checkin.method
+            goal.marker_type = checkin.marker_type
+            goal.expected_marker_id = checkin.expected_marker_id
+            goal.timeout_sec = checkin.timeout_sec
+            goal.confirmation_frames = checkin.confirmation_frames
+            checkin_goal_handle = await self.checkpoint_verifier.send_goal_async(goal)
+            if not checkin_goal_handle.accepted:
+                outcome = await self._handle_checkin_failure(
+                    runtime,
+                    checkpoint,
+                    action_outcome='VERIFIER_REJECTED',
+                    marker_id='',
+                    confirmation_count=0,
+                    evidence_path='',
+                    detail='verify_checkpoint action server rejected the goal',
+                )
+                if outcome == 'retry':
+                    continue
+                return outcome
+
+            with self._lock:
+                runtime.active_checkin_goal_handle = checkin_goal_handle
+                should_cancel = (
+                    runtime.cancel_requested or runtime.pause_requested or runtime.estop_active
+                )
+            if should_cancel:
+                checkin_goal_handle.cancel_goal_async()
+            result_wrapper = await checkin_goal_handle.get_result_async()
+            with self._lock:
+                runtime.active_checkin_goal_handle = None
+
+            if self._cancel_requested(runtime):
+                return 'cancelled'
+            if runtime.pause_requested or runtime.estop_active:
+                return 'restart_navigation'
+            result = result_wrapper.result
+            if int(result_wrapper.status) == GoalStatus.STATUS_SUCCEEDED and bool(result.success):
+                self._persist_checkin(
+                    runtime,
+                    checkpoint,
+                    success=True,
+                    outcome=result.outcome,
+                    marker_id=result.marker_id,
+                    confirmation_count=int(result.confirmation_count),
+                    evidence_path=result.evidence_path,
+                    detail=result.detail,
+                )
+                self._record_checkpoint(
+                    runtime,
+                    checkpoint,
+                    'CHECKIN_VERIFIED',
+                    f'{result.outcome}: {result.detail}',
+                )
+                return 'verified'
+
+            outcome = await self._handle_checkin_failure(
+                runtime,
+                checkpoint,
+                action_outcome=result.outcome or f'ACTION_STATUS_{int(result_wrapper.status)}',
+                marker_id=result.marker_id,
+                confirmation_count=int(result.confirmation_count),
+                evidence_path=result.evidence_path,
+                detail=result.detail or 'Checkpoint verifier returned failure',
+            )
+            if outcome == 'retry':
+                continue
+            return outcome
+
+    async def _handle_checkin_failure(
+        self,
+        runtime: MissionRuntime,
+        checkpoint: Checkpoint,
+        *,
+        action_outcome: str,
+        marker_id: str,
+        confirmation_count: int,
+        evidence_path: str,
+        detail: str,
+    ) -> str:
+        runtime.retry_count += 1
+        self._persist_checkin(
+            runtime,
+            checkpoint,
+            success=False,
+            outcome=action_outcome,
+            marker_id=marker_id,
+            confirmation_count=confirmation_count,
+            evidence_path=evidence_path,
+            detail=detail,
+        )
+        if runtime.retry_count <= checkpoint.checkin.retries:
+            self._record_checkpoint(
+                runtime,
+                checkpoint,
+                'CHECKIN_RETRY',
+                f'{action_outcome}; retry {runtime.retry_count}/{checkpoint.checkin.retries}',
+            )
+            return 'retry'
+
+        policy = checkpoint.checkin_failure_policy
+        if policy == 'abort_mission':
+            return 'failed'
+        if policy == 'retry_then_wait_operator':
+            self._transition(
+                runtime,
+                MissionState.WAITING_OPERATOR,
+                'CHECKIN_WAITING_OPERATOR',
+                f'{action_outcome}; waiting for operator resume',
+            )
+            return 'restart_navigation' if await self._await_resume(runtime) else 'cancelled'
+
+        runtime.failed_checkpoints += 1
+        self._record_checkpoint(
+            runtime,
+            checkpoint,
+            'CHECKIN_FAILED_CONTINUED',
+            f'{action_outcome}; continuing by policy {policy}: {detail}',
+        )
+        return 'continued_after_failure'
+
+    def _persist_checkin(
+        self,
+        runtime: MissionRuntime,
+        checkpoint: Checkpoint,
+        *,
+        success: bool,
+        outcome: str,
+        marker_id: str,
+        confirmation_count: int,
+        evidence_path: str,
+        detail: str,
+    ) -> None:
+        runtime.checkin_attempt += 1
+        self.mission_repository.record_checkin(
+            runtime.mission_id,
+            checkpoint_id=checkpoint.checkpoint_id,
+            attempt=runtime.checkin_attempt,
+            method=checkpoint.checkin.method,
+            outcome=outcome,
+            success=success,
+            marker_type=checkpoint.checkin.marker_type,
+            marker_id=marker_id,
+            confirmation_count=confirmation_count,
+            evidence_path=evidence_path,
+            detail=detail,
+        )
 
     async def _handle_navigation_failure(
         self,
@@ -443,6 +669,7 @@ class MissionManager(Node):
             if runtime.state_machine.state != MissionState.PAUSING:
                 self._transition(runtime, MissionState.PAUSING, 'PAUSE_REQUESTED', 'Pause requested by operator')
             self._cancel_active_navigation(runtime)
+            self._cancel_active_checkin(runtime)
             response.accepted = True
             response.state = runtime.state_machine.state.value
             response.message = 'Pause requested; waiting for navigation cancellation'
@@ -503,6 +730,7 @@ class MissionManager(Node):
                 'Safety mux reported an effective emergency stop',
             )
         self._cancel_active_navigation(runtime)
+        self._cancel_active_checkin(runtime)
 
     def _on_localization(self, _msg: PoseWithCovarianceStamped) -> None:
         self._last_localization_time_ns = self.get_clock().now().nanoseconds
@@ -609,6 +837,7 @@ class MissionManager(Node):
             runtime.cancel_requested = True
             future = runtime.resume_future
         self._cancel_active_navigation(runtime)
+        self._cancel_active_checkin(runtime)
         if future is not None and not future.done():
             future.set_result(False)
         self.get_logger().info(detail)
@@ -617,6 +846,12 @@ class MissionManager(Node):
         with self._lock:
             goal_handle = runtime.active_nav_goal_handle
         self.navigation.cancel(goal_handle)
+
+    def _cancel_active_checkin(self, runtime: MissionRuntime) -> None:
+        with self._lock:
+            goal_handle = runtime.active_checkin_goal_handle
+        if goal_handle is not None:
+            goal_handle.cancel_goal_async()
 
     def _cancel_requested(self, runtime: MissionRuntime) -> bool:
         return bool(runtime.cancel_requested or runtime.goal_handle.is_cancel_requested)

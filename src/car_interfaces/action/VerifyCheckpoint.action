@@ -1,0 +1,28 @@
+# Goal
+string mission_id
+string checkpoint_id
+float64 target_x
+float64 target_y
+float64 target_yaw
+float32 position_tolerance_m
+float32 yaw_tolerance_rad
+float32 max_pose_covariance
+float32 dwell_sec
+string method
+string marker_type
+string expected_marker_id
+float32 timeout_sec
+uint32 confirmation_frames
+---
+# Result
+bool success
+string outcome
+string marker_id
+uint32 confirmation_count
+string evidence_path
+string detail
+---
+# Feedback
+string stage
+float32 progress
+string detail

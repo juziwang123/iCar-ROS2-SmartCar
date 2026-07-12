@@ -14,6 +14,16 @@ NAVIGATION_FAILURE_POLICIES = frozenset({
     'abort_mission',
 })
 
+CHECKIN_FAILURE_POLICIES = frozenset({
+    'retry_then_continue',
+    'retry_then_wait_operator',
+    'alert_and_continue',
+    'abort_mission',
+})
+
+CHECKIN_METHODS = frozenset({'none', 'geofence', 'visual_marker'})
+MARKER_TYPES = frozenset({'qr', 'apriltag'})
+
 
 class RouteValidationError(ValueError):
     """Raised when a route definition is unsafe or structurally invalid."""
@@ -28,6 +38,18 @@ class Pose2D:
 
 
 @dataclass(frozen=True)
+class CheckinDefinition:
+    """The explicit P3 proof required after Nav2 reports arrival."""
+
+    method: str
+    marker_type: str
+    expected_marker_id: str
+    timeout_sec: float
+    retries: int
+    confirmation_frames: int
+
+
+@dataclass(frozen=True)
 class Checkpoint:
     checkpoint_id: str
     sequence: int
@@ -37,7 +59,10 @@ class Checkpoint:
     position_tolerance_m: float
     yaw_tolerance_rad: float
     dwell_sec: float
+    max_pose_covariance: float
+    checkin: CheckinDefinition
     navigation_failure_policy: str
+    checkin_failure_policy: str
     tasks: Tuple[Dict[str, Any], ...]
 
 
@@ -116,9 +141,21 @@ def route_to_mapping(route: RouteDefinition) -> Dict[str, Any]:
                     'position_tolerance_m': checkpoint.position_tolerance_m,
                     'yaw_tolerance_rad': checkpoint.yaw_tolerance_rad,
                     'dwell_sec': checkpoint.dwell_sec,
+                    'max_pose_covariance': checkpoint.max_pose_covariance,
+                },
+                'checkin': {
+                    'method': checkpoint.checkin.method,
+                    'marker_type': checkpoint.checkin.marker_type,
+                    'expected_marker_id': checkpoint.checkin.expected_marker_id,
+                    'timeout_sec': checkpoint.checkin.timeout_sec,
+                    'retries': checkpoint.checkin.retries,
+                    'confirmation_frames': checkpoint.checkin.confirmation_frames,
                 },
                 'tasks': list(checkpoint.tasks),
-                'failure_policy': {'navigation': checkpoint.navigation_failure_policy},
+                'failure_policy': {
+                    'navigation': checkpoint.navigation_failure_policy,
+                    'checkin': checkpoint.checkin_failure_policy,
+                },
             }
             for checkpoint in route.checkpoints
         ],
@@ -160,8 +197,16 @@ def _parse_checkpoint(value: Any, expected_sequence: int) -> Checkpoint:
         arrival.get('yaw_tolerance_rad', 0.35), f'{checkpoint_id}.arrival.yaw_tolerance_rad'
     )
     dwell_sec = _finite_number(arrival.get('dwell_sec', 0.0), f'{checkpoint_id}.arrival.dwell_sec')
-    if position_tolerance <= 0.0 or yaw_tolerance <= 0.0 or dwell_sec < 0.0:
+    max_pose_covariance = _finite_number(
+        arrival.get('max_pose_covariance', 0.25), f'{checkpoint_id}.arrival.max_pose_covariance'
+    )
+    if (
+        position_tolerance <= 0.0 or yaw_tolerance <= 0.0 or dwell_sec < 0.0
+        or max_pose_covariance <= 0.0
+    ):
         raise RouteValidationError(f'{checkpoint_id}.arrival contains an invalid tolerance or dwell time')
+
+    checkin = _parse_checkin(value.get('checkin'), checkpoint_id)
 
     failure_policy = value.get('failure_policy', {})
     if not isinstance(failure_policy, Mapping):
@@ -173,6 +218,13 @@ def _parse_checkpoint(value: Any, expected_sequence: int) -> Checkpoint:
     if navigation_policy not in NAVIGATION_FAILURE_POLICIES:
         allowed = ', '.join(sorted(NAVIGATION_FAILURE_POLICIES))
         raise RouteValidationError(f'{checkpoint_id}.failure_policy.navigation must be one of: {allowed}')
+    checkin_policy = _nonempty_string(
+        failure_policy.get('checkin', 'alert_and_continue'),
+        f'{checkpoint_id}.failure_policy.checkin',
+    )
+    if checkin_policy not in CHECKIN_FAILURE_POLICIES:
+        allowed = ', '.join(sorted(CHECKIN_FAILURE_POLICIES))
+        raise RouteValidationError(f'{checkpoint_id}.failure_policy.checkin must be one of: {allowed}')
 
     raw_tasks = value.get('tasks', [])
     if not isinstance(raw_tasks, list) or not all(isinstance(task, Mapping) for task in raw_tasks):
@@ -187,8 +239,55 @@ def _parse_checkpoint(value: Any, expected_sequence: int) -> Checkpoint:
         position_tolerance_m=position_tolerance,
         yaw_tolerance_rad=yaw_tolerance,
         dwell_sec=dwell_sec,
+        max_pose_covariance=max_pose_covariance,
+        checkin=checkin,
         navigation_failure_policy=navigation_policy,
+        checkin_failure_policy=checkin_policy,
         tasks=tuple(dict(task) for task in raw_tasks),
+    )
+
+
+def _parse_checkin(value: Any, checkpoint_id: str) -> CheckinDefinition:
+    # Routes created before P3 remain executable, but they explicitly receive
+    # no physical check-in proof until a checkin configuration is added.
+    if value is None:
+        return CheckinDefinition('none', '', '', 0.0, 0, 0)
+    if not isinstance(value, Mapping):
+        raise RouteValidationError(f'{checkpoint_id}.checkin must be an object')
+    method = _nonempty_string(value.get('method', 'none'), f'{checkpoint_id}.checkin.method')
+    if method not in CHECKIN_METHODS:
+        allowed = ', '.join(sorted(CHECKIN_METHODS))
+        raise RouteValidationError(f'{checkpoint_id}.checkin.method must be one of: {allowed}')
+    if method == 'none':
+        return CheckinDefinition('none', '', '', 0.0, 0, 0)
+
+    timeout_sec = _finite_number(
+        value.get('timeout_sec', 8.0), f'{checkpoint_id}.checkin.timeout_sec'
+    )
+    retries = _integer(value.get('retries', 0), f'{checkpoint_id}.checkin.retries', minimum=0)
+    confirmation_frames = _integer(
+        value.get('confirmation_frames', 2),
+        f'{checkpoint_id}.checkin.confirmation_frames',
+        minimum=1,
+    )
+    if timeout_sec <= 0.0:
+        raise RouteValidationError(f'{checkpoint_id}.checkin.timeout_sec must be greater than zero')
+    if confirmation_frames > 10:
+        raise RouteValidationError(f'{checkpoint_id}.checkin.confirmation_frames must be at most 10')
+    if method == 'geofence':
+        return CheckinDefinition('geofence', '', '', timeout_sec, retries, confirmation_frames)
+
+    marker_type = _nonempty_string(
+        value.get('marker_type'), f'{checkpoint_id}.checkin.marker_type'
+    ).lower()
+    if marker_type not in MARKER_TYPES:
+        allowed = ', '.join(sorted(MARKER_TYPES))
+        raise RouteValidationError(f'{checkpoint_id}.checkin.marker_type must be one of: {allowed}')
+    expected_marker_id = _nonempty_string(
+        value.get('expected_marker_id'), f'{checkpoint_id}.checkin.expected_marker_id'
+    )
+    return CheckinDefinition(
+        'visual_marker', marker_type, expected_marker_id, timeout_sec, retries, confirmation_frames
     )
 
 

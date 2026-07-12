@@ -12,6 +12,7 @@ class MissionState(str, Enum):
     LOCALIZING = 'LOCALIZING'
     NAVIGATING = 'NAVIGATING'
     ARRIVAL_CONFIRMING = 'ARRIVAL_CONFIRMING'
+    CHECKING_IN = 'CHECKING_IN'
     RECORDING = 'RECORDING'
     RECOVERING = 'RECOVERING'
     PAUSING = 'PAUSING'
@@ -35,6 +36,7 @@ _ACTIVE_STATES = frozenset({
     MissionState.LOCALIZING,
     MissionState.NAVIGATING,
     MissionState.ARRIVAL_CONFIRMING,
+    MissionState.CHECKING_IN,
     MissionState.RECORDING,
     MissionState.RECOVERING,
     MissionState.PAUSING,
@@ -62,7 +64,12 @@ ALLOWED_TRANSITIONS: Dict[MissionState, FrozenSet[MissionState]] = {
         MissionState.ESTOPPED, MissionState.WAITING_OPERATOR, MissionState.COMPLETED,
     ),
     MissionState.ARRIVAL_CONFIRMING: _with_terminal(
+        MissionState.CHECKING_IN, MissionState.RECORDING, MissionState.PAUSING,
+        MissionState.ESTOPPED, MissionState.WAITING_OPERATOR,
+    ),
+    MissionState.CHECKING_IN: _with_terminal(
         MissionState.RECORDING, MissionState.PAUSING, MissionState.ESTOPPED,
+        MissionState.WAITING_OPERATOR,
     ),
     MissionState.RECORDING: _with_terminal(
         MissionState.NAVIGATING, MissionState.COMPLETED, MissionState.PAUSING,

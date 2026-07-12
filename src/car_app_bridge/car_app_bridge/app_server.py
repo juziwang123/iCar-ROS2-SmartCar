@@ -21,6 +21,7 @@ from car_interfaces.action import ExecutePatrol
 from car_interfaces.msg import MissionStatus, PatrolEvent
 from car_interfaces.srv import MissionControl
 from car_map_manager.map_repository import MapNotFoundError, MapRepository, MapRepositoryError
+from car_mission.mission_repository import MissionRepository
 from car_mission.route_repository import RouteNotFoundError, RouteRepository
 from car_mission.route_schema import RouteValidationError, parse_route, route_to_mapping
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
@@ -73,6 +74,9 @@ class AppServer(Node):
         self.service_call_timeout_sec = float(self.get_parameter('service_call_timeout_sec').value)
         self.map_repository = MapRepository(str(self.get_parameter('maps_root').value))
         self.route_repository = RouteRepository(str(self.get_parameter('route_database_path').value))
+        self.mission_repository = MissionRepository(
+            str(self.get_parameter('route_database_path').value)
+        )
         self._control_lease = ControlLeaseManager(
             float(self.get_parameter('control_lease_timeout_sec').value)
         )
@@ -439,6 +443,9 @@ class AppServer(Node):
             return self._mission_control(payload, 'resume')
         if command == 'mission_cancel':
             return self._mission_control(payload, 'cancel')
+        if command == 'mission_checkins':
+            mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
+            return {'checkins': self.mission_repository.list_checkins(mission_id)}
         raise ProtocolError(f'unknown command: {command}')
 
     def _handle_legacy_text(self, session: ClientSession, line: str) -> None:
@@ -730,7 +737,8 @@ class AppServer(Node):
         state = str(self._state['mission'].get('state', '')).lower()
         return self._mission_goal_handle is not None or state in {
             'goal_requested', 'accepted', 'preparing', 'localizing', 'navigating',
-            'arrival_confirming', 'recording', 'pausing', 'paused', 'resuming',
+            'arrival_confirming', 'checking_in', 'recording', 'recovering',
+            'pausing', 'paused', 'resuming', 'waiting_operator', 'estopped',
         }
 
     def _follow_person(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -932,6 +940,7 @@ class AppServer(Node):
                 'map_list', 'map_get', 'map_save', 'initial_pose',
                 'route_list', 'route_get', 'route_validate', 'route_save', 'route_delete',
                 'mission_start', 'mission_pause', 'mission_resume', 'mission_cancel',
+                'mission_checkins',
             ],
             'modes': sorted(VALID_MODES),
             'telemetry_channels': sorted(TELEMETRY_CHANNELS),

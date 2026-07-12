@@ -107,6 +107,57 @@ class MissionRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def record_checkin(
+        self,
+        mission_id: str,
+        *,
+        checkpoint_id: str,
+        attempt: int,
+        method: str,
+        outcome: str,
+        success: bool,
+        marker_type: str,
+        marker_id: str,
+        confirmation_count: int,
+        evidence_path: str,
+        detail: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                '''
+                INSERT INTO checkpoint_checkins (
+                    mission_id, checkpoint_id, attempt, method, outcome, success,
+                    marker_type, marker_id, confirmation_count, evidence_path, detail, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    mission_id,
+                    checkpoint_id,
+                    attempt,
+                    method,
+                    outcome,
+                    int(success),
+                    marker_type,
+                    marker_id,
+                    confirmation_count,
+                    evidence_path,
+                    detail,
+                    _utc_now(),
+                ),
+            )
+
+    def list_checkins(self, mission_id: str) -> List[dict]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                '''
+                SELECT * FROM checkpoint_checkins
+                WHERE mission_id = ?
+                ORDER BY checkin_id
+                ''',
+                (mission_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def _initialize(self) -> None:
         with self._connection() as connection:
             connection.execute(
@@ -124,6 +175,26 @@ class MissionRepository:
                     detail TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
+                )
+                '''
+            )
+            connection.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS checkpoint_checkins (
+                    checkin_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mission_id TEXT NOT NULL,
+                    checkpoint_id TEXT NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    method TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    success INTEGER NOT NULL,
+                    marker_type TEXT NOT NULL,
+                    marker_id TEXT NOT NULL,
+                    confirmation_count INTEGER NOT NULL,
+                    evidence_path TEXT NOT NULL,
+                    detail TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (mission_id) REFERENCES missions(mission_id)
                 )
                 '''
             )

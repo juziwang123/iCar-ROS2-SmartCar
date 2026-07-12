@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    action_name: verify_checkpoint
+    localization_topic: /amcl_pose
+    control_output_topic: /control/cmd_vel
+    image_topic: /camera/color/image_raw
+    marker_topic: /inspection/marker_detections
+    evidence_root: ~/.icar/evidence
+    pose_max_age_sec: 1.0
+    motion_max_age_sec: 0.5
+    image_max_age_sec: 1.0
+    still_linear_speed_mps: 0.02
+    still_angular_speed_rps: 0.03
+    poll_period_sec: 0.10
+    detect_qr: true
+    # Requires OpenCV aruco/APRILTAG support; unavailable installations
+    # continue serving QR and geofence check-ins safely.
+    detect_apriltag: true

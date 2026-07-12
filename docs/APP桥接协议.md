@@ -119,16 +119,19 @@ manifest 至少包含 `map_id`、`name`、`resolution`、`origin`、`width`、`h
         "name":"一号门",
         "type":"checkin",
         "pose":{"frame_id":"map","x":1.20,"y":-0.40,"yaw":1.57},
-        "arrival":{"position_tolerance_m":0.30,"yaw_tolerance_rad":0.35,"dwell_sec":1.0},
+        "arrival":{"position_tolerance_m":0.30,"yaw_tolerance_rad":0.35,"dwell_sec":1.0,"max_pose_covariance":0.25},
+        "checkin":{"method":"visual_marker","marker_type":"qr","expected_marker_id":"ICAR:door-01","timeout_sec":8.0,"retries":1,"confirmation_frames":2},
         "tasks":[],
-        "failure_policy":{"navigation":"retry_then_wait_operator"}
+        "failure_policy":{"navigation":"retry_then_wait_operator","checkin":"retry_then_wait_operator"}
       }
     ]
   }
 }
 ```
 
-限制：`schema_version` 当前必须为 1；`route_id`、`map_id`、`checkpoint_id` 不可为空或包含空白；节点 `sequence` 从 1 连续递增；坐标系必须为 `map`；版本为正整数。`tasks` 已作为节点扩展字段持久化，P3 将由巡检任务执行器定义其具体类型与结果协议。
+限制：`schema_version` 当前必须为 1；`route_id`、`map_id`、`checkpoint_id` 不可为空或包含空白；节点 `sequence` 从 1 连续递增；坐标系必须为 `map`；版本为正整数。`checkin.method` 可为 `none`、`geofence` 或 `visual_marker`；视觉打卡只接受 `qr`、`apriltag`，且必须提供精确的 `expected_marker_id`。`none` 仅为 P3 前路线兼容，任务记录会明确标注 `NOT_REQUIRED`，不能视为物理打卡成功。
+
+`geofence` 依次校验 AMCL 位姿距离、朝向、x/y/yaw 协方差、`/control/cmd_vel` 静止状态和 `dwell_sec`。`visual_marker` 在此基础上要求新的连续 `confirmation_frames` 个相机检测帧完整匹配标记类型与 ID；错误 ID、过期位姿、移动中检测、超时或缺少证据图都会失败。视觉成功时车端写入 `~/.icar/evidence/<mission_id>/<checkpoint_id>/` 的 JPEG 和 JSON 元数据（含 SHA-256）；TCP 不传输该文件的二进制内容。
 
 ## 6. 巡检任务接口
 
@@ -140,6 +143,7 @@ manifest 至少包含 `map_id`、`name`、`resolution`、`origin`、`width`、`h
 | `mission_pause` | `mission_id` | 请求暂停 |
 | `mission_resume` | `mission_id` | 请求继续 |
 | `mission_cancel` | `mission_id` | 请求取消 |
+| `mission_checkins` | `mission_id` | 查询已持久化的每次打卡尝试、结果、匹配 ID 和车端证据路径 |
 
 启动示例：
 
@@ -147,7 +151,7 @@ manifest 至少包含 `map_id`、`name`、`resolution`、`origin`、`width`、`h
 {"id":"mission-1","cmd":"mission_start","route_id":"warehouse_a_day","route_version":1,"start_checkpoint_index":0,"loop":false}
 ```
 
-`mission_start` 的即时响应仅表示 action 已提交，最终是否被接受和执行进度请订阅 `mission`。任务状态中包含 `mission_id`、路线版本、当前节点、节点总数、进度、重试次数和详情；`event` 记录状态迁移和可审计事件。直接导航 `nav_goal` 与巡检互斥；巡检期间应使用上述任务命令，不应发送 `nav_goal`。
+`mission_start` 的即时响应仅表示 action 已提交，最终是否被接受和执行进度请订阅 `mission`。任务状态中包含 `mission_id`、路线版本、当前节点、节点总数、进度、重试次数和详情；`event` 记录状态迁移和可审计事件，例如 `CHECKIN_VERIFIED`、`CHECKIN_RETRY`、`CHECKIN_FAILED_CONTINUED`。调用 `mission_checkins` 可获得完整结构化打卡记录。`evidence_path` 是车端受管理路径，只能通过部署方另行提供的受鉴权只读文件服务访问；桥接端口不会接受任意路径读取请求。直接导航 `nav_goal` 与巡检互斥；巡检期间应使用上述任务命令，不应发送 `nav_goal`。
 
 ## 7. 直接导航和视觉跟随
 
@@ -167,7 +171,7 @@ manifest 至少包含 `map_id`、`name`、`resolution`、`origin`、`width`、`h
 | 地图保存 | `nav2_msgs/srv/SaveMap`，默认 `/map_saver/save_map` |
 | 初始位姿 / 位姿遥测 | `/initialpose` / `/amcl_pose`（`PoseWithCovarianceStamped`） |
 | 路线存储 | `~/.icar/icar.db`，由 `car_mission` 管理 |
-| 巡检 | `car_interfaces/action/ExecutePatrol`、`car_interfaces/srv/MissionControl`、`/mission/status`、`/mission/event` |
+| 巡检 | `car_interfaces/action/ExecutePatrol`、`car_interfaces/action/VerifyCheckpoint`、`car_interfaces/srv/MissionControl`、`/mission/status`、`/mission/event` |
 | 手动控制 | `/cmd_vel_manual`，最终由 `safety_mux` 输出 `/control/cmd_vel` |
 | 急停 | `/emergency_stop`，实际生效状态为 `/control/effective_estop` |
 

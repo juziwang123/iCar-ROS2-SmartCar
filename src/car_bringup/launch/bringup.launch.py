@@ -67,10 +67,13 @@ def generate_launch_description() -> LaunchDescription:
     navigation_use_rviz = LaunchConfiguration('navigation_use_rviz')
     use_patrol = LaunchConfiguration('use_patrol')
     use_mission = LaunchConfiguration('use_mission')
+    use_inspection = LaunchConfiguration('use_inspection')
+    inspection_use_marker_detector = LaunchConfiguration('inspection_use_marker_detector')
     params_file = LaunchConfiguration('params_file')
     lidar_params_file = LaunchConfiguration('lidar_params_file')
     vision_params_file = LaunchConfiguration('vision_params_file')
     app_bridge_params_file = LaunchConfiguration('app_bridge_params_file')
+    inspection_params_file = LaunchConfiguration('inspection_params_file')
     map_file = LaunchConfiguration('map')
     nav_params_file = LaunchConfiguration('nav_params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -110,6 +113,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
         DeclareLaunchArgument('use_patrol', default_value='false'),
         DeclareLaunchArgument('use_mission', default_value='false'),
+        DeclareLaunchArgument('use_inspection', default_value='false'),
+        DeclareLaunchArgument('inspection_use_marker_detector', default_value='true'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('navigation_goal_x', default_value='0.5'),
         DeclareLaunchArgument('navigation_goal_y', default_value='0.0'),
@@ -162,6 +167,12 @@ def generate_launch_description() -> LaunchDescription:
                 FindPackageShare('car_app_bridge'),
                 'config',
                 'app_bridge.yaml',
+            ]),
+        ),
+        DeclareLaunchArgument(
+            'inspection_params_file',
+            default_value=PathJoinSubstitution([
+                FindPackageShare('car_inspection'), 'config', 'inspection.yaml',
             ]),
         ),
         DeclareLaunchArgument(
@@ -296,6 +307,20 @@ def generate_launch_description() -> LaunchDescription:
                 'require_localization': mission_require_localization,
             }.items(),
             condition=IfCondition(use_mission),
+        ),
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                PathJoinSubstitution([
+                    FindPackageShare('car_inspection'),
+                    'launch',
+                    'inspection.launch.py',
+                ])
+            ),
+            launch_arguments={
+                'params_file': inspection_params_file,
+                'use_marker_detector': inspection_use_marker_detector,
+            }.items(),
+            condition=IfCondition(use_inspection),
         ),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
