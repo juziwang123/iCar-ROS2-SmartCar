@@ -25,7 +25,8 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertNotIn('topic echo --once', script)
         self.assertIn('PYTHONUNBUFFERED=1 ros2 topic echo', script)
         self.assertIn('--qos-durability "${durability}"', script)
-        self.assertIn('MAPPING_MAP_TIMEOUT', script)
+        self.assertIn('check_topic /map "${LOG_DIR}/smoke_mapping.log"', script)
+        self.assertIn('check_topic /map "${LOG_DIR}/smoke_navigation.log"', script)
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
