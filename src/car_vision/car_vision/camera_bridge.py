@@ -17,7 +17,9 @@ class CameraBridge(Node):
 
     def __init__(self) -> None:
         super().__init__('camera_bridge')
-        self.declare_parameter('video_device', '/dev/video0')
+        # ``0`` is the factory-tested OpenCV path for the UVC stream at
+        # /dev/video0. An explicit device path remains supported.
+        self.declare_parameter('video_device', '0')
         self.declare_parameter('image_topic', '/camera/color/image_raw')
         self.declare_parameter('frame_id', 'camera_color_frame')
         self.declare_parameter('width', 640)
@@ -56,7 +58,10 @@ class CameraBridge(Node):
         self._release_capture()
         device = str(self.get_parameter('video_device').value)
         source: Union[int, str] = int(device) if device.isdigit() else device
-        capture = self.cv2.VideoCapture(source, self.cv2.CAP_V4L2)
+        # Use OpenCV's default backend selection. The Jetson OpenCV build
+        # opens this Astra UVC endpoint via VideoCapture(0), while forcing
+        # CAP_V4L2 fails despite the device supporting V4L2 ioctls.
+        capture = self.cv2.VideoCapture(source)
         if not capture.isOpened():
             capture.release()
             self.get_logger().warn(f'Cannot open V4L2 colour device {device}; will retry')
@@ -113,4 +118,3 @@ def main(args: Optional[Sequence[str]] = None) -> None:
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
