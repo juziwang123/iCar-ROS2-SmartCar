@@ -9,7 +9,8 @@ from typing import Any, Dict, List, Optional
 PROTOCOL_VERSION = 2
 VALID_MODES = frozenset({'manual', 'nav', 'vision', 'follow'})
 TELEMETRY_CHANNELS = frozenset({
-    'status', 'lidar', 'vision', 'navigation', 'pose', 'mission', 'event', 'control_lease',
+    'status', 'lidar', 'vision', 'navigation', 'pose', 'mission', 'inspection', 'event',
+    'control_lease',
 })
 
 

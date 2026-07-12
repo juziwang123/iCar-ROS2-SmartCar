@@ -57,7 +57,7 @@ class TestAppProtocol(unittest.TestCase):
 
     def test_v2_exposes_patrol_and_control_telemetry_channels(self):
         self.assertEqual(PROTOCOL_VERSION, 2)
-        self.assertTrue({'pose', 'mission', 'event', 'control_lease'} <= TELEMETRY_CHANNELS)
+        self.assertTrue({'pose', 'mission', 'inspection', 'event', 'control_lease'} <= TELEMETRY_CHANNELS)
 
     def test_object_and_integer_fields_are_strict(self):
         self.assertEqual(object_value({'route_id': 'r'}, 'route')['route_id'], 'r')

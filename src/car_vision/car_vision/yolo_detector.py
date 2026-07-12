@@ -165,7 +165,12 @@ class YoloDetector(Node):
             return
         if self.model is None or self.bridge is None:
             self._clear_safety_and_follow()
-            self._publish_detections([], error=self.unavailable_reason or 'cv_bridge is unavailable')
+            self._publish_detections(
+                [],
+                error=self.unavailable_reason or 'cv_bridge is unavailable',
+                stamp=msg.header.stamp,
+                frame_id=msg.header.frame_id,
+            )
             return
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -174,11 +179,19 @@ class YoloDetector(Node):
         except Exception as exc:
             self.get_logger().error(f'YOLO inference failed: {exc}')
             self._clear_safety_and_follow()
-            self._publish_detections([], error='inference failed')
+            self._publish_detections(
+                [], error='inference failed', stamp=msg.header.stamp, frame_id=msg.header.frame_id
+            )
             return
         self._publish_person_safety(detections)
         self._publish_follow_command(detections, frame.shape[1])
-        self._publish_detections(detections, image_width=frame.shape[1], image_height=frame.shape[0])
+        self._publish_detections(
+            detections,
+            image_width=frame.shape[1],
+            image_height=frame.shape[0],
+            stamp=msg.header.stamp,
+            frame_id=msg.header.frame_id,
+        )
 
     def _inference_due(self) -> bool:
         rate_hz = float(self.get_parameter('inference_rate_hz').value)
@@ -321,6 +334,8 @@ class YoloDetector(Node):
         image_width: Optional[int] = None,
         image_height: Optional[int] = None,
         error: Optional[str] = None,
+        stamp: Optional[Any] = None,
+        frame_id: str = '',
     ) -> None:
         payload: Dict[str, Any] = {
             'detected': bool(detections),
@@ -330,6 +345,12 @@ class YoloDetector(Node):
         }
         if image_width is not None and image_height is not None:
             payload['image'] = {'width': image_width, 'height': image_height}
+        if stamp is not None:
+            payload['stamp'] = {
+                'sec': int(stamp.sec),
+                'nanosec': int(stamp.nanosec),
+                'frame_id': frame_id,
+            }
         if error:
             payload['error'] = error
         self.publisher.publish(String(data=json.dumps(payload, ensure_ascii=False)))

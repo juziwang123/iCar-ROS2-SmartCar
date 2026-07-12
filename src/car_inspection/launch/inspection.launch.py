@@ -32,4 +32,11 @@ def generate_launch_description() -> LaunchDescription:
             parameters=[params_file],
             output='screen',
         ),
+        Node(
+            package='car_inspection',
+            executable='inspection_executor',
+            name='inspection_executor',
+            parameters=[params_file],
+            output='screen',
+        ),
     ])

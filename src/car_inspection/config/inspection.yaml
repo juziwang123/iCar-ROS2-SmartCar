@@ -16,3 +16,19 @@
     # Requires OpenCV aruco/APRILTAG support; unavailable installations
     # continue serving QR and geofence check-ins safely.
     detect_apriltag: true
+    inspection_action_name: run_inspection
+    inspection_result_topic: /inspection/result
+    inspection_detection_topic: /vision/detections
+    inspection_image_cache_size: 30
+    inspection_detection_cache_size: 60
+    inspection_capture_settle_sec: 0.5
+    inspection_capture_timeout_sec: 5.0
+    inspection_detection_wait_sec: 0.8
+    inspection_detection_max_age_sec: 1.5
+    # Keep false until the deployed detector has been validated for absence
+    # decisions in the real scene.  Otherwise no detection remains UNKNOWN.
+    inspection_allow_local_absent: false
+    # Deployment-owned VLM endpoint.  Empty disables network calls safely.
+    inspection_vlm_endpoint: ''
+    inspection_vlm_timeout_sec: 15.0
+    inspection_poll_period_sec: 0.05

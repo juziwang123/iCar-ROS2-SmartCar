@@ -106,6 +106,36 @@ class TestRouteSchema(unittest.TestCase):
         with self.assertRaises(RouteValidationError):
             parse_route(data)
 
+    def test_inspection_task_is_normalized_and_uses_required_task_policy(self):
+        data = sample_route()
+        data['checkpoints'][0]['tasks'] = [{
+            'task_id': 'CP-01-T01',
+            'type': 'visual_presence',
+            'target': 'fire_extinguisher',
+            'required': True,
+            'capture_count': 3,
+            'local_model': 'fire_safety.onnx',
+            'use_vlm_fallback': True,
+            'confidence_threshold': 0.70,
+        }]
+        data['checkpoints'][0]['failure_policy']['required_task'] = 'wait_operator'
+        route = parse_route(data)
+        task = route.checkpoints[0].tasks[0]
+        self.assertEqual(task.task_id, 'CP-01-T01')
+        self.assertEqual(task.capture_count, 3)
+        self.assertTrue(task.use_vlm_fallback)
+        self.assertEqual(route.checkpoints[0].required_task_failure_policy, 'wait_operator')
+
+    def test_inspection_task_rejects_unknown_type(self):
+        data = sample_route()
+        data['checkpoints'][0]['tasks'] = [{
+            'task_id': 'CP-01-T01',
+            'type': 'arbitrary_shell_command',
+            'target': 'fire_extinguisher',
+        }]
+        with self.assertRaises(RouteValidationError):
+            parse_route(data)
+
 
 class TestMissionStateMachine(unittest.TestCase):
     def test_happy_path_reaches_completed(self):
@@ -116,6 +146,8 @@ class TestMissionStateMachine(unittest.TestCase):
             MissionState.NAVIGATING,
             MissionState.ARRIVAL_CONFIRMING,
             MissionState.CHECKING_IN,
+            MissionState.CAPTURING,
+            MissionState.INSPECTING,
             MissionState.RECORDING,
             MissionState.COMPLETED,
         ):
@@ -201,6 +233,25 @@ class TestRepositories(unittest.TestCase):
                 detail='verified',
             )
             self.assertEqual(missions.list_checkins('mission-1')[0]['marker_id'], 'ICAR:CP-01')
+            missions.record_inspection(
+                'mission-1',
+                checkpoint_id='CP-01',
+                task_id='CP-01-T01',
+                task_type='visual_presence',
+                target='fire_extinguisher',
+                success=True,
+                conclusion='PRESENT',
+                confidence=0.92,
+                needs_human_review=False,
+                evidence_paths=['/tmp/capture.jpg'],
+                detail_json='{"source":"local_model"}',
+            )
+            self.assertEqual(missions.list_inspections('mission-1')[0]['conclusion'], 'PRESENT')
+            self.assertEqual(missions.list_inspections('mission-1')[0]['evidence_paths'], ['/tmp/capture.jpg'])
+            report = missions.get_report('mission-1')
+            self.assertEqual(report['summary']['checkin_successes'], 1)
+            self.assertEqual(report['summary']['inspection_conclusions'], {'PRESENT': 1})
+            self.assertFalse(report['inspections'][0]['needs_human_review'])
             self.assertEqual(routes.delete('lab_route'), 1)
             with self.assertRaises(RouteNotFoundError):
                 routes.load('lab_route')

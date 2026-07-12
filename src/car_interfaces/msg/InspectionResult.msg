@@ -1,0 +1,11 @@
+std_msgs/Header header
+string mission_id
+string checkpoint_id
+string task_id
+string task_type
+string target
+string conclusion
+float32 confidence
+bool needs_human_review
+string[] evidence_paths
+string detail_json

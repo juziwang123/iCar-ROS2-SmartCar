@@ -23,6 +23,8 @@ CHECKIN_FAILURE_POLICIES = frozenset({
 
 CHECKIN_METHODS = frozenset({'none', 'geofence', 'visual_marker'})
 MARKER_TYPES = frozenset({'qr', 'apriltag'})
+INSPECTION_TASK_TYPES = frozenset({'visual_presence'})
+REQUIRED_TASK_FAILURE_POLICIES = frozenset({'continue', 'wait_operator', 'abort_mission'})
 
 
 class RouteValidationError(ValueError):
@@ -50,6 +52,20 @@ class CheckinDefinition:
 
 
 @dataclass(frozen=True)
+class InspectionTask:
+    """A model-agnostic visual task executed after a successful check-in."""
+
+    task_id: str
+    task_type: str
+    target: str
+    required: bool
+    capture_count: int
+    local_model: str
+    use_vlm_fallback: bool
+    confidence_threshold: float
+
+
+@dataclass(frozen=True)
 class Checkpoint:
     checkpoint_id: str
     sequence: int
@@ -63,7 +79,8 @@ class Checkpoint:
     checkin: CheckinDefinition
     navigation_failure_policy: str
     checkin_failure_policy: str
-    tasks: Tuple[Dict[str, Any], ...]
+    required_task_failure_policy: str
+    tasks: Tuple[InspectionTask, ...]
 
 
 @dataclass(frozen=True)
@@ -151,10 +168,23 @@ def route_to_mapping(route: RouteDefinition) -> Dict[str, Any]:
                     'retries': checkpoint.checkin.retries,
                     'confirmation_frames': checkpoint.checkin.confirmation_frames,
                 },
-                'tasks': list(checkpoint.tasks),
+                'tasks': [
+                    {
+                        'task_id': task.task_id,
+                        'type': task.task_type,
+                        'target': task.target,
+                        'required': task.required,
+                        'capture_count': task.capture_count,
+                        'local_model': task.local_model,
+                        'use_vlm_fallback': task.use_vlm_fallback,
+                        'confidence_threshold': task.confidence_threshold,
+                    }
+                    for task in checkpoint.tasks
+                ],
                 'failure_policy': {
                     'navigation': checkpoint.navigation_failure_policy,
                     'checkin': checkpoint.checkin_failure_policy,
+                    'required_task': checkpoint.required_task_failure_policy,
                 },
             }
             for checkpoint in route.checkpoints
@@ -225,10 +255,20 @@ def _parse_checkpoint(value: Any, expected_sequence: int) -> Checkpoint:
     if checkin_policy not in CHECKIN_FAILURE_POLICIES:
         allowed = ', '.join(sorted(CHECKIN_FAILURE_POLICIES))
         raise RouteValidationError(f'{checkpoint_id}.failure_policy.checkin must be one of: {allowed}')
+    required_task_policy = _nonempty_string(
+        failure_policy.get('required_task', 'wait_operator'),
+        f'{checkpoint_id}.failure_policy.required_task',
+    )
+    if required_task_policy not in REQUIRED_TASK_FAILURE_POLICIES:
+        allowed = ', '.join(sorted(REQUIRED_TASK_FAILURE_POLICIES))
+        raise RouteValidationError(
+            f'{checkpoint_id}.failure_policy.required_task must be one of: {allowed}'
+        )
 
     raw_tasks = value.get('tasks', [])
-    if not isinstance(raw_tasks, list) or not all(isinstance(task, Mapping) for task in raw_tasks):
+    if not isinstance(raw_tasks, list):
         raise RouteValidationError(f'{checkpoint_id}.tasks must be an array of objects')
+    tasks = _parse_tasks(raw_tasks, checkpoint_id)
 
     return Checkpoint(
         checkpoint_id=checkpoint_id,
@@ -243,7 +283,8 @@ def _parse_checkpoint(value: Any, expected_sequence: int) -> Checkpoint:
         checkin=checkin,
         navigation_failure_policy=navigation_policy,
         checkin_failure_policy=checkin_policy,
-        tasks=tuple(dict(task) for task in raw_tasks),
+        required_task_failure_policy=required_task_policy,
+        tasks=tasks,
     )
 
 
@@ -289,6 +330,57 @@ def _parse_checkin(value: Any, checkpoint_id: str) -> CheckinDefinition:
     return CheckinDefinition(
         'visual_marker', marker_type, expected_marker_id, timeout_sec, retries, confirmation_frames
     )
+
+
+def _parse_tasks(value: List[Any], checkpoint_id: str) -> Tuple[InspectionTask, ...]:
+    tasks: List[InspectionTask] = []
+    seen_ids = set()
+    for index, raw_task in enumerate(value):
+        if not isinstance(raw_task, Mapping):
+            raise RouteValidationError(f'{checkpoint_id}.tasks[{index}] must be an object')
+        task_id = _identifier(raw_task.get('task_id'), f'{checkpoint_id}.tasks[{index}].task_id')
+        if task_id in seen_ids:
+            raise RouteValidationError(f'{checkpoint_id}.tasks contains duplicate task_id: {task_id}')
+        seen_ids.add(task_id)
+        task_type = _nonempty_string(
+            raw_task.get('type'), f'{checkpoint_id}.{task_id}.type'
+        )
+        if task_type not in INSPECTION_TASK_TYPES:
+            allowed = ', '.join(sorted(INSPECTION_TASK_TYPES))
+            raise RouteValidationError(f'{checkpoint_id}.{task_id}.type must be one of: {allowed}')
+        target = _nonempty_string(raw_task.get('target'), f'{checkpoint_id}.{task_id}.target')
+        required = _boolean(raw_task.get('required', True), f'{checkpoint_id}.{task_id}.required')
+        capture_count = _integer(
+            raw_task.get('capture_count', 1), f'{checkpoint_id}.{task_id}.capture_count', minimum=1
+        )
+        if capture_count > 5:
+            raise RouteValidationError(f'{checkpoint_id}.{task_id}.capture_count must be at most 5')
+        local_model = raw_task.get('local_model', '')
+        if not isinstance(local_model, str):
+            raise RouteValidationError(f'{checkpoint_id}.{task_id}.local_model must be a string')
+        use_vlm_fallback = _boolean(
+            raw_task.get('use_vlm_fallback', False),
+            f'{checkpoint_id}.{task_id}.use_vlm_fallback',
+        )
+        confidence_threshold = _finite_number(
+            raw_task.get('confidence_threshold', 0.70),
+            f'{checkpoint_id}.{task_id}.confidence_threshold',
+        )
+        if confidence_threshold < 0.0 or confidence_threshold > 1.0:
+            raise RouteValidationError(
+                f'{checkpoint_id}.{task_id}.confidence_threshold must be between zero and one'
+            )
+        tasks.append(InspectionTask(
+            task_id=task_id,
+            task_type=task_type,
+            target=target,
+            required=required,
+            capture_count=capture_count,
+            local_model=local_model.strip(),
+            use_vlm_fallback=use_vlm_fallback,
+            confidence_threshold=confidence_threshold,
+        ))
+    return tuple(tasks)
 
 
 def _identifier(value: Any, field: str) -> str:

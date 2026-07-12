@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'checkpoint_verifier = car_inspection.checkpoint_verifier:main',
+            'inspection_executor = car_inspection.inspection_executor:main',
             'qr_detector = car_inspection.qr_detector:main',
         ],
     },

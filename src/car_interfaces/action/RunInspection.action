@@ -1,0 +1,23 @@
+# Goal
+string mission_id
+string checkpoint_id
+string task_id
+string task_type
+string target
+string local_model
+uint32 capture_count
+bool use_vlm_fallback
+float32 confidence_threshold
+---
+# Result
+bool success
+string conclusion
+float32 confidence
+bool needs_human_review
+string[] evidence_paths
+string detail_json
+---
+# Feedback
+string stage
+float32 progress
+string detail

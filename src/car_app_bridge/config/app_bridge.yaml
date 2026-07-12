@@ -24,6 +24,7 @@
     robot_pose_topic: /amcl_pose
     mission_status_topic: /mission/status
     mission_event_topic: /mission/event
+    inspection_result_topic: /inspection/result
     mission_action: execute_patrol
     mission_control_service: /mission/control
     maps_root: ~/.icar/maps

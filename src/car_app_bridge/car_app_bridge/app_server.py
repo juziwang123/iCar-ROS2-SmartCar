@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional, Sequence, Set
 
 import rclpy
 from car_interfaces.action import ExecutePatrol
-from car_interfaces.msg import MissionStatus, PatrolEvent
+from car_interfaces.msg import InspectionResult, MissionStatus, PatrolEvent
 from car_interfaces.srv import MissionControl
 from car_map_manager.map_repository import MapNotFoundError, MapRepository, MapRepositoryError
 from car_mission.mission_repository import MissionRepository
@@ -102,6 +102,7 @@ class AppServer(Node):
             'navigation': {'state': 'idle'},
             'pose': None,
             'mission': {'state': 'idle'},
+            'inspection': None,
         }
 
         self.cmd_pub = self.create_publisher(Twist, self._parameter_topic('manual_topic'), 10)
@@ -163,6 +164,12 @@ class AppServer(Node):
         self.create_subscription(
             PatrolEvent, self._parameter_topic('mission_event_topic'), self._on_mission_event, 10
         )
+        self.create_subscription(
+            InspectionResult,
+            self._parameter_topic('inspection_result_topic'),
+            self._on_inspection_result,
+            10,
+        )
         self.create_timer(0.1, self._expire_control_lease)
 
         self._thread = threading.Thread(target=self._serve, daemon=True)
@@ -196,6 +203,7 @@ class AppServer(Node):
         self.declare_parameter('robot_pose_topic', '/amcl_pose')
         self.declare_parameter('mission_status_topic', '/mission/status')
         self.declare_parameter('mission_event_topic', '/mission/event')
+        self.declare_parameter('inspection_result_topic', '/inspection/result')
         self.declare_parameter('mission_action', 'execute_patrol')
         self.declare_parameter('mission_control_service', '/mission/control')
         self.declare_parameter('maps_root', '~/.icar/maps')
@@ -446,6 +454,12 @@ class AppServer(Node):
         if command == 'mission_checkins':
             mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
             return {'checkins': self.mission_repository.list_checkins(mission_id)}
+        if command == 'mission_inspections':
+            mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
+            return {'inspections': self.mission_repository.list_inspections(mission_id)}
+        if command == 'mission_report':
+            mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
+            return {'report': self.mission_repository.get_report(mission_id)}
         raise ProtocolError(f'unknown command: {command}')
 
     def _handle_legacy_text(self, session: ClientSession, line: str) -> None:
@@ -738,7 +752,8 @@ class AppServer(Node):
         return self._mission_goal_handle is not None or state in {
             'goal_requested', 'accepted', 'preparing', 'localizing', 'navigating',
             'arrival_confirming', 'checking_in', 'recording', 'recovering',
-            'pausing', 'paused', 'resuming', 'waiting_operator', 'estopped',
+            'capturing', 'inspecting', 'pausing', 'paused', 'resuming',
+            'waiting_operator', 'estopped',
         }
 
     def _follow_person(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -929,6 +944,24 @@ class AppServer(Node):
             'stamp': {'sec': int(msg.header.stamp.sec), 'nanosec': int(msg.header.stamp.nanosec)},
         })
 
+    def _on_inspection_result(self, msg: InspectionResult) -> None:
+        inspection = {
+            'mission_id': msg.mission_id,
+            'checkpoint_id': msg.checkpoint_id,
+            'task_id': msg.task_id,
+            'task_type': msg.task_type,
+            'target': msg.target,
+            'conclusion': msg.conclusion,
+            'confidence': float(msg.confidence),
+            'needs_human_review': bool(msg.needs_human_review),
+            'evidence_paths': list(msg.evidence_paths),
+            'detail_json': msg.detail_json,
+            'stamp': {'sec': int(msg.header.stamp.sec), 'nanosec': int(msg.header.stamp.nanosec)},
+        }
+        self._state['inspection'] = inspection
+        self._broadcast('inspection', dict(inspection))
+        self._broadcast('status', self._snapshot())
+
     # Responses and telemetry ---------------------------------------------
     def _capabilities(self) -> Dict[str, Any]:
         return {
@@ -940,7 +973,7 @@ class AppServer(Node):
                 'map_list', 'map_get', 'map_save', 'initial_pose',
                 'route_list', 'route_get', 'route_validate', 'route_save', 'route_delete',
                 'mission_start', 'mission_pause', 'mission_resume', 'mission_cancel',
-                'mission_checkins',
+                'mission_checkins', 'mission_inspections', 'mission_report',
             ],
             'modes': sorted(VALID_MODES),
             'telemetry_channels': sorted(TELEMETRY_CHANNELS),
@@ -960,6 +993,7 @@ class AppServer(Node):
             'navigation': dict(self._state['navigation']),
             'pose': dict(self._state['pose']) if self._state['pose'] is not None else None,
             'mission': dict(self._state['mission']),
+            'inspection': dict(self._state['inspection']) if self._state['inspection'] is not None else None,
             'control_lease': self._control_lease_snapshot(),
         }
 

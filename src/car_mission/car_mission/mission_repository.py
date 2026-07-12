@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -158,6 +159,94 @@ class MissionRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def record_inspection(
+        self,
+        mission_id: str,
+        *,
+        checkpoint_id: str,
+        task_id: str,
+        task_type: str,
+        target: str,
+        success: bool,
+        conclusion: str,
+        confidence: float,
+        needs_human_review: bool,
+        evidence_paths: List[str],
+        detail_json: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                '''
+                INSERT INTO inspection_results (
+                    mission_id, checkpoint_id, task_id, task_type, target, success,
+                    conclusion, confidence, needs_human_review, evidence_paths_json,
+                    detail_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''',
+                (
+                    mission_id,
+                    checkpoint_id,
+                    task_id,
+                    task_type,
+                    target,
+                    int(success),
+                    conclusion,
+                    confidence,
+                    int(needs_human_review),
+                    json.dumps(evidence_paths, ensure_ascii=False),
+                    detail_json,
+                    _utc_now(),
+                ),
+            )
+
+    def list_inspections(self, mission_id: str) -> List[dict]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                '''
+                SELECT * FROM inspection_results
+                WHERE mission_id = ?
+                ORDER BY inspection_id
+                ''',
+                (mission_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            result = dict(row)
+            result['success'] = bool(result.get('success'))
+            result['needs_human_review'] = bool(result.get('needs_human_review'))
+            try:
+                result['evidence_paths'] = json.loads(result.pop('evidence_paths_json'))
+            except (KeyError, TypeError, json.JSONDecodeError):
+                result['evidence_paths'] = []
+            results.append(result)
+        return results
+
+    def get_report(self, mission_id: str) -> dict:
+        """Return a transport-safe mission report without exposing evidence content."""
+        mission = self.get_mission(mission_id)
+        checkins = self.list_checkins(mission_id)
+        inspections = self.list_inspections(mission_id)
+        conclusion_counts = {}
+        for inspection in inspections:
+            conclusion = inspection.get('conclusion', 'UNKNOWN')
+            conclusion_counts[conclusion] = conclusion_counts.get(conclusion, 0) + 1
+        return {
+            'mission': mission,
+            'summary': {
+                'checkin_attempts': len(checkins),
+                'checkin_successes': sum(1 for item in checkins if bool(item['success'])),
+                'inspection_count': len(inspections),
+                'inspection_successes': sum(1 for item in inspections if item['success']),
+                'needs_human_review_count': sum(
+                    1 for item in inspections if item['needs_human_review']
+                ),
+                'inspection_conclusions': conclusion_counts,
+            },
+            'checkins': checkins,
+            'inspections': inspections,
+            'events': self.list_events(mission_id),
+        }
+
     def _initialize(self) -> None:
         with self._connection() as connection:
             connection.execute(
@@ -193,6 +282,26 @@ class MissionRepository:
                     confirmation_count INTEGER NOT NULL,
                     evidence_path TEXT NOT NULL,
                     detail TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (mission_id) REFERENCES missions(mission_id)
+                )
+                '''
+            )
+            connection.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS inspection_results (
+                    inspection_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    mission_id TEXT NOT NULL,
+                    checkpoint_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    success INTEGER NOT NULL,
+                    conclusion TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    needs_human_review INTEGER NOT NULL,
+                    evidence_paths_json TEXT NOT NULL,
+                    detail_json TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (mission_id) REFERENCES missions(mission_id)
                 )

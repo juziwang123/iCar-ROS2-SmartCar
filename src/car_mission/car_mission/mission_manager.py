@@ -1,4 +1,4 @@
-"""Action-driven, persistent Nav2 patrol mission manager with P3 check-ins."""
+"""Action-driven patrol mission manager with check-in and inspection actions."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, Optional, Sequence
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from car_interfaces.action import ExecutePatrol, VerifyCheckpoint
+from car_interfaces.action import ExecutePatrol, RunInspection, VerifyCheckpoint
 from car_interfaces.msg import MissionStatus, PatrolEvent
 from car_interfaces.srv import MissionControl
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
@@ -24,7 +24,7 @@ from std_msgs.msg import Bool, String
 from .mission_repository import MissionRepository
 from .navigation_adapter import NavigationAdapter
 from .route_repository import RouteNotFoundError, RouteRepository
-from .route_schema import Checkpoint, RouteDefinition
+from .route_schema import Checkpoint, InspectionTask, RouteDefinition
 from .state_machine import MissionState, MissionStateMachine, TERMINAL_STATES
 
 
@@ -46,6 +46,7 @@ class MissionRuntime:
     estop_active: bool = False
     active_nav_goal_handle: Optional[Any] = None
     active_checkin_goal_handle: Optional[Any] = None
+    active_inspection_goal_handle: Optional[Any] = None
     resume_future: Optional[Future] = None
 
 
@@ -103,6 +104,12 @@ class MissionManager(Node):
             str(self.get_parameter('checkin_action').value),
             callback_group=self._callback_group,
         )
+        self.inspection_executor = ActionClient(
+            self,
+            RunInspection,
+            str(self.get_parameter('inspection_action').value),
+            callback_group=self._callback_group,
+        )
         self.action_server = ActionServer(
             self,
             ExecutePatrol,
@@ -140,6 +147,8 @@ class MissionManager(Node):
         self.declare_parameter('max_nav_retries', 2)
         self.declare_parameter('checkin_action', 'verify_checkpoint')
         self.declare_parameter('checkin_server_timeout_sec', 2.0)
+        self.declare_parameter('inspection_action', 'run_inspection')
+        self.declare_parameter('inspection_server_timeout_sec', 2.0)
 
     def _import_configured_route(self) -> None:
         route_file = str(self.get_parameter('route_file').value).strip()
@@ -263,11 +272,24 @@ class MissionManager(Node):
                     # re-enters the checkpoint through Nav2 rather than
                     # trusting a stale arrival/marker observation.
                     continue
+                inspection_outcome = await self._execute_inspection_tasks(runtime, checkpoint)
+                if inspection_outcome == 'cancelled':
+                    return self._finalize_cancelled(
+                        runtime, 'Mission cancelled during checkpoint inspection'
+                    )
+                if inspection_outcome == 'failed':
+                    runtime.failed_checkpoints += 1
+                    return self._finalize_failed(
+                        runtime, f'Inspection failed at {checkpoint.checkpoint_id}'
+                    )
+                if inspection_outcome == 'restart_navigation':
+                    continue
                 self._transition(
                     runtime,
                     MissionState.RECORDING,
                     'CHECKPOINT_RECORDED',
-                    f'Checkpoint {checkpoint.checkpoint_id} recorded after {checkin_outcome}',
+                    f'Checkpoint {checkpoint.checkpoint_id} recorded after '
+                    f'{checkin_outcome}/{inspection_outcome}',
                 )
                 runtime.completed_checkpoints += 1
                 code = (
@@ -279,7 +301,7 @@ class MissionManager(Node):
                     runtime,
                     checkpoint,
                     code,
-                    f'Checkpoint completed after {checkin_outcome}',
+                    f'Checkpoint completed after {checkin_outcome}/{inspection_outcome}',
                 )
                 runtime.retry_count = 0
                 runtime.checkin_attempt = 0
@@ -574,6 +596,183 @@ class MissionManager(Node):
             detail=detail,
         )
 
+    async def _execute_inspection_tasks(
+        self, runtime: MissionRuntime, checkpoint: Checkpoint
+    ) -> str:
+        """Execute the checkpoint's model-agnostic visual tasks in order."""
+        if not checkpoint.tasks:
+            return 'not_required'
+        for task in checkpoint.tasks:
+            outcome = await self._execute_inspection_task(runtime, checkpoint, task)
+            if outcome in {'cancelled', 'failed', 'restart_navigation'}:
+                return outcome
+        return 'completed'
+
+    async def _execute_inspection_task(
+        self,
+        runtime: MissionRuntime,
+        checkpoint: Checkpoint,
+        task: InspectionTask,
+    ) -> str:
+        self._transition(
+            runtime,
+            MissionState.CAPTURING,
+            'INSPECTION_CAPTURE_STARTED',
+            f'Capturing evidence for {task.task_id}',
+        )
+        if self._cancel_requested(runtime):
+            return 'cancelled'
+        if runtime.pause_requested or runtime.estop_active:
+            return 'restart_navigation'
+        if not self.inspection_executor.wait_for_server(
+            timeout_sec=float(self.get_parameter('inspection_server_timeout_sec').value)
+        ):
+            return await self._handle_inspection_result(
+                runtime,
+                checkpoint,
+                task,
+                success=False,
+                conclusion='UNKNOWN',
+                confidence=0.0,
+                needs_human_review=True,
+                evidence_paths=[],
+                detail_json='{"error":"INSPECTION_EXECUTOR_UNAVAILABLE"}',
+            )
+
+        goal = RunInspection.Goal()
+        goal.mission_id = runtime.mission_id
+        goal.checkpoint_id = checkpoint.checkpoint_id
+        goal.task_id = task.task_id
+        goal.task_type = task.task_type
+        goal.target = task.target
+        goal.local_model = task.local_model
+        goal.capture_count = task.capture_count
+        goal.use_vlm_fallback = task.use_vlm_fallback
+        goal.confidence_threshold = task.confidence_threshold
+        inspection_goal_handle = await self.inspection_executor.send_goal_async(
+            goal,
+            feedback_callback=lambda feedback: self._on_inspection_feedback(runtime, task, feedback),
+        )
+        if not inspection_goal_handle.accepted:
+            return await self._handle_inspection_result(
+                runtime,
+                checkpoint,
+                task,
+                success=False,
+                conclusion='UNKNOWN',
+                confidence=0.0,
+                needs_human_review=True,
+                evidence_paths=[],
+                detail_json='{"error":"INSPECTION_EXECUTOR_REJECTED"}',
+            )
+
+        with self._lock:
+            runtime.active_inspection_goal_handle = inspection_goal_handle
+            should_cancel = (
+                runtime.cancel_requested or runtime.pause_requested or runtime.estop_active
+            )
+        if should_cancel:
+            inspection_goal_handle.cancel_goal_async()
+        result_wrapper = await inspection_goal_handle.get_result_async()
+        with self._lock:
+            runtime.active_inspection_goal_handle = None
+        if self._cancel_requested(runtime):
+            return 'cancelled'
+        if runtime.pause_requested or runtime.estop_active:
+            return 'restart_navigation'
+
+        result = result_wrapper.result
+        return await self._handle_inspection_result(
+            runtime,
+            checkpoint,
+            task,
+            success=(int(result_wrapper.status) == GoalStatus.STATUS_SUCCEEDED and bool(result.success)),
+            conclusion=result.conclusion or 'UNKNOWN',
+            confidence=float(result.confidence),
+            needs_human_review=bool(result.needs_human_review),
+            evidence_paths=list(result.evidence_paths),
+            detail_json=result.detail_json or '{"error":"EMPTY_INSPECTION_RESULT"}',
+        )
+
+    async def _handle_inspection_result(
+        self,
+        runtime: MissionRuntime,
+        checkpoint: Checkpoint,
+        task: InspectionTask,
+        *,
+        success: bool,
+        conclusion: str,
+        confidence: float,
+        needs_human_review: bool,
+        evidence_paths: Sequence[str],
+        detail_json: str,
+    ) -> str:
+        if runtime.state_machine.state == MissionState.CAPTURING:
+            self._transition(
+                runtime,
+                MissionState.INSPECTING,
+                'INSPECTION_RESULT_RECEIVED',
+                f'Processing result for {task.task_id}',
+            )
+        self.mission_repository.record_inspection(
+            runtime.mission_id,
+            checkpoint_id=checkpoint.checkpoint_id,
+            task_id=task.task_id,
+            task_type=task.task_type,
+            target=task.target,
+            success=success,
+            conclusion=conclusion,
+            confidence=confidence,
+            needs_human_review=needs_human_review,
+            evidence_paths=list(evidence_paths),
+            detail_json=detail_json,
+        )
+        self._record_checkpoint(
+            runtime,
+            checkpoint,
+            'INSPECTION_RESULT',
+            f'{task.task_id}: {conclusion} (confidence={confidence:.3f})',
+        )
+        unresolved = not success or conclusion in {'UNKNOWN', 'NEEDS_HUMAN_REVIEW'} or needs_human_review
+        if not task.required or not unresolved:
+            return 'completed'
+        policy = checkpoint.required_task_failure_policy
+        if policy == 'abort_mission':
+            return 'failed'
+        if policy == 'wait_operator':
+            self._transition(
+                runtime,
+                MissionState.WAITING_OPERATOR,
+                'REQUIRED_INSPECTION_WAITING_OPERATOR',
+                f'{task.task_id} requires operator decision: {conclusion}',
+            )
+            return 'restart_navigation' if await self._await_resume(runtime) else 'cancelled'
+        runtime.failed_checkpoints += 1
+        self._record_checkpoint(
+            runtime,
+            checkpoint,
+            'REQUIRED_INSPECTION_UNRESOLVED_CONTINUED',
+            f'{task.task_id} unresolved ({conclusion}); continuing by policy',
+        )
+        return 'completed'
+
+    def _on_inspection_feedback(self, runtime: MissionRuntime, task: InspectionTask, feedback_message) -> None:
+        with self._lock:
+            if self._runtime is not runtime or runtime.state_machine.state in TERMINAL_STATES:
+                return
+            current = runtime.state_machine.state
+        feedback = feedback_message.feedback
+        stage = str(feedback.stage).strip().upper()
+        if stage == 'INSPECTING' and current == MissionState.CAPTURING:
+            self._transition(
+                runtime,
+                MissionState.INSPECTING,
+                'INSPECTION_ANALYSIS_STARTED',
+                f'{task.task_id}: {feedback.detail}',
+            )
+        elif stage == 'CAPTURING':
+            self._sync_status(runtime, f'{task.task_id}: {feedback.detail}')
+
     async def _handle_navigation_failure(
         self,
         runtime: MissionRuntime,
@@ -670,6 +869,7 @@ class MissionManager(Node):
                 self._transition(runtime, MissionState.PAUSING, 'PAUSE_REQUESTED', 'Pause requested by operator')
             self._cancel_active_navigation(runtime)
             self._cancel_active_checkin(runtime)
+            self._cancel_active_inspection(runtime)
             response.accepted = True
             response.state = runtime.state_machine.state.value
             response.message = 'Pause requested; waiting for navigation cancellation'
@@ -731,6 +931,7 @@ class MissionManager(Node):
             )
         self._cancel_active_navigation(runtime)
         self._cancel_active_checkin(runtime)
+        self._cancel_active_inspection(runtime)
 
     def _on_localization(self, _msg: PoseWithCovarianceStamped) -> None:
         self._last_localization_time_ns = self.get_clock().now().nanoseconds
@@ -838,6 +1039,7 @@ class MissionManager(Node):
             future = runtime.resume_future
         self._cancel_active_navigation(runtime)
         self._cancel_active_checkin(runtime)
+        self._cancel_active_inspection(runtime)
         if future is not None and not future.done():
             future.set_result(False)
         self.get_logger().info(detail)
@@ -850,6 +1052,12 @@ class MissionManager(Node):
     def _cancel_active_checkin(self, runtime: MissionRuntime) -> None:
         with self._lock:
             goal_handle = runtime.active_checkin_goal_handle
+        if goal_handle is not None:
+            goal_handle.cancel_goal_async()
+
+    def _cancel_active_inspection(self, runtime: MissionRuntime) -> None:
+        with self._lock:
+            goal_handle = runtime.active_inspection_goal_handle
         if goal_handle is not None:
             goal_handle.cancel_goal_async()
 
