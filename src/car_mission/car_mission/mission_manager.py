@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
@@ -23,6 +24,8 @@ from std_msgs.msg import Bool, String
 
 from .mission_repository import MissionRepository
 from .navigation_adapter import NavigationAdapter
+from .report_exporter import export_report
+from .recovery_policy import RecoveryDecision, blocked_recovery
 from .route_repository import RouteNotFoundError, RouteRepository
 from .route_schema import Checkpoint, InspectionTask, RouteDefinition
 from .state_machine import MissionState, MissionStateMachine, TERMINAL_STATES
@@ -44,6 +47,11 @@ class MissionRuntime:
     pause_requested: bool = False
     cancel_requested: bool = False
     estop_active: bool = False
+    obstacle_blocked: bool = False
+    obstacle_since: Optional[float] = None
+    sensor_fault_active: bool = False
+    localization_lost: bool = False
+    obstacle_clear_future: Optional[Future] = None
     active_nav_goal_handle: Optional[Any] = None
     active_checkin_goal_handle: Optional[Any] = None
     active_inspection_goal_handle: Optional[Any] = None
@@ -64,6 +72,9 @@ class MissionManager(Node):
         database_path = str(self.get_parameter('database_path').value)
         self.route_repository = RouteRepository(database_path)
         self.mission_repository = MissionRepository(database_path)
+        recovered = self.mission_repository.recover_incomplete_missions()
+        if recovered:
+            self.get_logger().warn(f'Parked {len(recovered)} interrupted mission(s) for operator recovery')
         self._import_configured_route()
 
         self.goal_publisher = self.create_publisher(
@@ -85,6 +96,15 @@ class MissionManager(Node):
             10,
             callback_group=self._callback_group,
         )
+        self.create_subscription(
+            Bool, str(self.get_parameter('obstacle_blocked_topic').value), self._on_obstacle_blocked,
+            10, callback_group=self._callback_group,
+        )
+        self.create_subscription(
+            Bool, str(self.get_parameter('sensor_fault_topic').value), self._on_sensor_fault,
+            10, callback_group=self._callback_group,
+        )
+        self.create_timer(0.2, self._monitor_runtime, callback_group=self._callback_group)
         self.create_subscription(
             Bool,
             str(self.get_parameter('effective_estop_topic').value),
@@ -149,6 +169,11 @@ class MissionManager(Node):
         self.declare_parameter('checkin_server_timeout_sec', 2.0)
         self.declare_parameter('inspection_action', 'run_inspection')
         self.declare_parameter('inspection_server_timeout_sec', 2.0)
+        self.declare_parameter('obstacle_blocked_topic', '/lidar/override_active')
+        self.declare_parameter('sensor_fault_topic', '/system/sensor_fault')
+        self.declare_parameter('obstacle_blocked_timeout_sec', 8.0)
+        self.declare_parameter('max_blocked_retries', 2)
+        self.declare_parameter('reports_root', '~/.icar/reports')
 
     def _import_configured_route(self) -> None:
         route_file = str(self.get_parameter('route_file').value).strip()
@@ -319,6 +344,7 @@ class MissionManager(Node):
         if not bool(self.get_parameter('require_localization').value):
             return True
         while not self._has_fresh_localization():
+            runtime.localization_lost = True
             self._transition(
                 runtime,
                 MissionState.WAITING_OPERATOR,
@@ -333,14 +359,26 @@ class MissionManager(Node):
                 'LOCALIZATION_RECHECK',
                 'Rechecking localization after operator resume',
             )
+        runtime.localization_lost = False
         return True
 
     async def _navigate_checkpoint(self, runtime: MissionRuntime, checkpoint: Checkpoint) -> str:
         while True:
             if self._cancel_requested(runtime):
                 return 'cancelled'
+            if runtime.sensor_fault_active:
+                return await self._wait_for_operator(runtime, 'SENSOR_FAULT', 'Sensor health fault is active')
+            if runtime.localization_lost:
+                if not await self._ensure_localization(runtime):
+                    return 'cancelled'
             if not await self._wait_if_stopped(runtime):
                 return 'cancelled'
+
+            blocked = await self._blocked_outcome(runtime)
+            if blocked is not None:
+                if blocked == 'retry':
+                    continue
+                return blocked
 
             self._transition(
                 runtime,
@@ -382,8 +420,18 @@ class MissionManager(Node):
 
             if self._cancel_requested(runtime):
                 return 'cancelled'
+            if runtime.sensor_fault_active:
+                return await self._wait_for_operator(runtime, 'SENSOR_FAULT', 'Sensor health fault is active')
+            if runtime.localization_lost:
+                if not await self._ensure_localization(runtime):
+                    return 'cancelled'
             if runtime.estop_active or runtime.pause_requested:
                 continue
+            blocked = await self._blocked_outcome(runtime)
+            if blocked is not None:
+                if blocked == 'retry':
+                    continue
+                return blocked
             if int(result.status) == GoalStatus.STATUS_SUCCEEDED:
                 runtime.retry_count = 0
                 return 'succeeded'
@@ -421,7 +469,10 @@ class MissionManager(Node):
         while True:
             if self._cancel_requested(runtime):
                 return 'cancelled'
-            if runtime.pause_requested or runtime.estop_active:
+            if (
+                runtime.pause_requested or runtime.estop_active or runtime.localization_lost
+                or runtime.sensor_fault_active
+            ):
                 return 'restart_navigation'
             if not self.checkpoint_verifier.wait_for_server(
                 timeout_sec=float(self.get_parameter('checkin_server_timeout_sec').value)
@@ -482,7 +533,10 @@ class MissionManager(Node):
 
             if self._cancel_requested(runtime):
                 return 'cancelled'
-            if runtime.pause_requested or runtime.estop_active:
+            if (
+                runtime.pause_requested or runtime.estop_active or runtime.localization_lost
+                or runtime.sensor_fault_active
+            ):
                 return 'restart_navigation'
             result = result_wrapper.result
             if int(result_wrapper.status) == GoalStatus.STATUS_SUCCEEDED and bool(result.success):
@@ -622,7 +676,10 @@ class MissionManager(Node):
         )
         if self._cancel_requested(runtime):
             return 'cancelled'
-        if runtime.pause_requested or runtime.estop_active:
+        if (
+            runtime.pause_requested or runtime.estop_active or runtime.localization_lost
+            or runtime.sensor_fault_active
+        ):
             return 'restart_navigation'
         if not self.inspection_executor.wait_for_server(
             timeout_sec=float(self.get_parameter('inspection_server_timeout_sec').value)
@@ -678,7 +735,10 @@ class MissionManager(Node):
             runtime.active_inspection_goal_handle = None
         if self._cancel_requested(runtime):
             return 'cancelled'
-        if runtime.pause_requested or runtime.estop_active:
+        if (
+            runtime.pause_requested or runtime.estop_active or runtime.localization_lost
+            or runtime.sensor_fault_active
+        ):
             return 'restart_navigation'
 
         result = result_wrapper.result
@@ -802,6 +862,52 @@ class MissionManager(Node):
             'NAVIGATION_BLOCKED',
             f'{detail}; waiting for operator decision',
         )
+        return 'retry' if await self._await_resume(runtime) else 'cancelled'
+
+    async def _blocked_outcome(self, runtime: MissionRuntime) -> Optional[str]:
+        """Perform only bounded Nav2 retry recovery after a sustained lidar stop."""
+        if not runtime.obstacle_blocked or runtime.obstacle_since is None:
+            return None
+        decision = blocked_recovery(
+            blocked_for_sec=time.monotonic() - runtime.obstacle_since,
+            retry_count=runtime.retry_count,
+            timeout_sec=float(self.get_parameter('obstacle_blocked_timeout_sec').value),
+            max_retries=int(self.get_parameter('max_blocked_retries').value),
+        )
+        if decision == RecoveryDecision.WAIT:
+            return None
+        if decision == RecoveryDecision.WAIT_OPERATOR:
+            return await self._wait_for_operator(
+                runtime, 'OBSTACLE_BLOCKED',
+                'Obstacle remains in safety stop zone after bounded recovery; waiting for operator',
+            )
+        if runtime.state_machine.state != MissionState.BLOCKED:
+            self._transition(
+                runtime, MissionState.BLOCKED, 'OBSTACLE_BLOCKED',
+                'Sustained obstacle; Nav2 goal cancelled until the safety zone is clear',
+            )
+        with self._lock:
+            if not runtime.obstacle_blocked:
+                return 'retry'
+            if runtime.obstacle_clear_future is None or runtime.obstacle_clear_future.done():
+                runtime.obstacle_clear_future = Future()
+            future = runtime.obstacle_clear_future
+        cleared = await future
+        with self._lock:
+            runtime.obstacle_clear_future = None
+        if not cleared or self._cancel_requested(runtime):
+            return 'cancelled'
+        runtime.retry_count += 1
+        self._transition(
+            runtime, MissionState.RECOVERING, 'OBSTACLE_RECOVERY_RETRY',
+            f'Obstacle cleared; retry {runtime.retry_count}/'
+            f'{int(self.get_parameter("max_blocked_retries").value)} through Nav2 replanning',
+        )
+        return 'retry'
+
+    async def _wait_for_operator(self, runtime: MissionRuntime, code: str, detail: str) -> str:
+        if runtime.state_machine.state != MissionState.WAITING_OPERATOR:
+            self._transition(runtime, MissionState.WAITING_OPERATOR, code, detail)
         return 'retry' if await self._await_resume(runtime) else 'cancelled'
 
     async def _wait_if_stopped(self, runtime: MissionRuntime) -> bool:
@@ -932,6 +1038,64 @@ class MissionManager(Node):
         self._cancel_active_navigation(runtime)
         self._cancel_active_checkin(runtime)
         self._cancel_active_inspection(runtime)
+
+    def _on_obstacle_blocked(self, msg: Bool) -> None:
+        now = time.monotonic()
+        with self._lock:
+            runtime = self._runtime
+            if runtime is None or runtime.state_machine.state in TERMINAL_STATES:
+                return
+            was_blocked = runtime.obstacle_blocked
+            runtime.obstacle_blocked = bool(msg.data)
+            if runtime.obstacle_blocked and not was_blocked:
+                runtime.obstacle_since = now
+            elif not runtime.obstacle_blocked:
+                runtime.obstacle_since = None
+                future = runtime.obstacle_clear_future
+                if future is not None and not future.done():
+                    future.set_result(True)
+
+    def _on_sensor_fault(self, msg: Bool) -> None:
+        with self._lock:
+            runtime = self._runtime
+            if runtime is None or runtime.state_machine.state in TERMINAL_STATES:
+                return
+            runtime.sensor_fault_active = bool(msg.data)
+        if msg.data:
+            self._cancel_active_navigation(runtime)
+            self._cancel_active_checkin(runtime)
+            self._cancel_active_inspection(runtime)
+
+    def _monitor_runtime(self) -> None:
+        """Cancel autonomous actions promptly when a P5 safety prerequisite expires."""
+        with self._lock:
+            runtime = self._runtime
+            if runtime is None or runtime.state_machine.state in TERMINAL_STATES:
+                return
+            state = runtime.state_machine.state
+            localization_stale = bool(self.get_parameter('require_localization').value) and not self._has_fresh_localization()
+            if localization_stale:
+                runtime.localization_lost = True
+            obstacle_timed_out = (
+                runtime.obstacle_blocked and runtime.obstacle_since is not None
+                and time.monotonic() - runtime.obstacle_since >= float(
+                    self.get_parameter('obstacle_blocked_timeout_sec').value
+                )
+            )
+        if localization_stale:
+            if (
+                state != MissionState.WAITING_OPERATOR
+                and runtime.state_machine.can_transition(MissionState.WAITING_OPERATOR)
+            ):
+                self._transition(
+                    runtime, MissionState.WAITING_OPERATOR, 'LOCALIZATION_LOST',
+                    'AMCL localization is stale; set initial pose and explicitly resume',
+                )
+            self._cancel_active_navigation(runtime)
+            self._cancel_active_checkin(runtime)
+            self._cancel_active_inspection(runtime)
+        elif obstacle_timed_out:
+            self._cancel_active_navigation(runtime)
 
     def _on_localization(self, _msg: PoseWithCovarianceStamped) -> None:
         self._last_localization_time_ns = self.get_clock().now().nanoseconds
@@ -1093,6 +1257,7 @@ class MissionManager(Node):
         failed: int,
         skipped: int,
         message: str,
+        report_path: str = '',
     ) -> ExecutePatrol.Result:
         result = ExecutePatrol.Result()
         result.mission_id = mission_id
@@ -1101,12 +1266,13 @@ class MissionManager(Node):
         result.completed_checkpoints = completed
         result.failed_checkpoints = failed
         result.skipped_checkpoints = skipped
-        result.report_path = ''
+        result.report_path = report_path
         result.message = message
         return result
 
     def _finalize_success(self, runtime: MissionRuntime, detail: str) -> ExecutePatrol.Result:
         self._transition(runtime, MissionState.COMPLETED, 'MISSION_COMPLETED', detail)
+        report_path = self._export_report(runtime)
         runtime.goal_handle.succeed()
         return self._result(
             runtime.mission_id,
@@ -1116,10 +1282,12 @@ class MissionManager(Node):
             runtime.failed_checkpoints,
             runtime.skipped_checkpoints,
             detail,
+            report_path,
         )
 
     def _finalize_cancelled(self, runtime: MissionRuntime, detail: str) -> ExecutePatrol.Result:
         self._transition(runtime, MissionState.CANCELLED, 'MISSION_CANCELLED', detail)
+        report_path = self._export_report(runtime)
         runtime.goal_handle.canceled()
         return self._result(
             runtime.mission_id,
@@ -1129,10 +1297,12 @@ class MissionManager(Node):
             runtime.failed_checkpoints,
             runtime.skipped_checkpoints,
             detail,
+            report_path,
         )
 
     def _finalize_failed(self, runtime: MissionRuntime, detail: str) -> ExecutePatrol.Result:
         self._transition(runtime, MissionState.FAILED, 'MISSION_FAILED', detail)
+        report_path = self._export_report(runtime)
         runtime.goal_handle.abort()
         return self._result(
             runtime.mission_id,
@@ -1142,7 +1312,20 @@ class MissionManager(Node):
             runtime.failed_checkpoints,
             runtime.skipped_checkpoints,
             detail,
+            report_path,
         )
+
+    def _export_report(self, runtime: MissionRuntime) -> str:
+        try:
+            return export_report(
+                self.mission_repository.get_report(runtime.mission_id),
+                str(self.get_parameter('reports_root').value),
+            )
+        except Exception as exc:
+            # Reporting must not convert an otherwise correctly persisted
+            # terminal mission into a movement or mission-control failure.
+            self.get_logger().error(f'Could not export report for {runtime.mission_id}: {exc}')
+            return ''
 
     @staticmethod
     def _checkpoint_id(runtime: MissionRuntime) -> str:

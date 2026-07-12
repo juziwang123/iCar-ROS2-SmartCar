@@ -8,6 +8,8 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / 'src' / 'car_mission'
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from car_mission.mission_repository import MissionRepository
+from car_mission.recovery_policy import RecoveryDecision, blocked_recovery, person_clear_ready
+from car_mission.report_exporter import export_report
 from car_mission.route_repository import RouteNotFoundError, RouteRepository
 from car_mission.route_schema import RouteValidationError, parse_route
 from car_mission.state_machine import InvalidTransition, MissionState, MissionStateMachine
@@ -176,6 +178,15 @@ class TestMissionStateMachine(unittest.TestCase):
         machine.transition(MissionState.COMPLETED)
         self.assertTrue(machine.terminal)
 
+    def test_sustained_obstacle_transitions_through_blocked(self):
+        machine = MissionStateMachine()
+        for state in (MissionState.PREPARING, MissionState.LOCALIZING, MissionState.NAVIGATING):
+            machine.transition(state)
+        machine.transition(MissionState.BLOCKED)
+        machine.transition(MissionState.RECOVERING)
+        machine.transition(MissionState.NAVIGATING)
+        self.assertEqual(machine.state, MissionState.NAVIGATING)
+
 
 class TestRepositories(unittest.TestCase):
     def test_route_versions_and_mission_events_are_persisted(self):
@@ -255,6 +266,43 @@ class TestRepositories(unittest.TestCase):
             self.assertEqual(routes.delete('lab_route'), 1)
             with self.assertRaises(RouteNotFoundError):
                 routes.load('lab_route')
+
+    def test_restart_recovery_and_report_export_are_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / 'icar.db')
+            missions = MissionRepository(database)
+            missions.create_mission('mission-safe_1', 'lab_route', 2, 'NAVIGATING', 2)
+            missions.update_status(
+                'mission-safe_1', state='NAVIGATING', checkpoint_index=1,
+                checkpoint_total=2, checkpoint_id='CP-02', retry_count=0,
+                progress=0.5, detail='interrupted',
+            )
+            self.assertEqual(len(missions.recover_incomplete_missions()), 1)
+            parked = missions.list_recoverable_missions()
+            self.assertEqual(parked[0]['state'], 'WAITING_OPERATOR')
+            self.assertEqual(parked[0]['retry_current_checkpoint_index'], 1)
+            self.assertEqual(parked[0]['continue_next_checkpoint_index'], 2)
+            report_path = Path(export_report(missions.get_report('mission-safe_1'), directory))
+            self.assertTrue(report_path.is_file())
+            self.assertTrue(report_path.with_name('report.html').is_file())
+
+
+class TestRecoveryPolicy(unittest.TestCase):
+    def test_recovery_is_bounded_and_person_clear_requires_delay(self):
+        self.assertEqual(
+            blocked_recovery(blocked_for_sec=2, retry_count=0, timeout_sec=3, max_retries=2),
+            RecoveryDecision.WAIT,
+        )
+        self.assertEqual(
+            blocked_recovery(blocked_for_sec=3, retry_count=0, timeout_sec=3, max_retries=2),
+            RecoveryDecision.RETRY,
+        )
+        self.assertEqual(
+            blocked_recovery(blocked_for_sec=3, retry_count=2, timeout_sec=3, max_retries=2),
+            RecoveryDecision.WAIT_OPERATOR,
+        )
+        self.assertFalse(person_clear_ready(clear_for_sec=1.4, required_clear_sec=1.5))
+        self.assertTrue(person_clear_ready(clear_for_sec=1.5, required_clear_sec=1.5))
 
 
 if __name__ == '__main__':

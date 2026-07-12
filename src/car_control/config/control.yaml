@@ -7,8 +7,11 @@
     allow_manual_escape_when_lidar_override: true
     person_slow_topic: /vision/person_slow
     person_estop_topic: /vision/person_estop
+    sensor_fault_topic: /system/sensor_fault
     effective_estop_topic: /control/effective_estop
     person_slow_max_linear_speed: 0.10
+    # Person must remain clear continuously before commands are released.
+    person_clear_delay_sec: 1.5
     repeat_rate_hz: 20.0
     idle_stop_cycles: 4
     follow_topic: /cmd_vel_follow

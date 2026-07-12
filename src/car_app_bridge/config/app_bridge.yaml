@@ -29,6 +29,7 @@
     mission_control_service: /mission/control
     maps_root: ~/.icar/maps
     route_database_path: ~/.icar/icar.db
+    reports_root: ~/.icar/reports
     map_saver_service: /map_saver/save_map
     map_topic: /map
     map_image_format: pgm

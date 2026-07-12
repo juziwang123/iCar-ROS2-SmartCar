@@ -22,11 +22,11 @@ def is_supported_mode(value: Any) -> bool:
     return normalize_mode(value) in VALID_MODES
 
 
-def effective_estop(*, operator_latched: bool, person_active: bool) -> bool:
+def effective_estop(*, operator_latched: bool, person_active: bool, sensor_fault: bool = False) -> bool:
     """Return whether motion must be stopped immediately.
 
     Operator emergency-stop is latched by ``SafetyMux`` until a separate,
     explicit false command is received. Person stop is intentionally dynamic:
     it remains active only while the perception node reports a nearby person.
     """
-    return bool(operator_latched or person_active)
+    return bool(operator_latched or person_active or sensor_fault)

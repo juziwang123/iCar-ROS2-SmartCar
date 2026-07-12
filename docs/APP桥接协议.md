@@ -147,6 +147,8 @@ manifest 至少包含 `map_id`、`name`、`resolution`、`origin`、`width`、`h
 | `mission_checkins` | `mission_id` | 查询已持久化的每次打卡尝试、结果、匹配 ID 和车端证据路径 |
 | `mission_inspections` | `mission_id` | 查询每项视觉巡检的结构化结论、置信度、人工复核标记和证据路径 |
 | `mission_report` | `mission_id` | 查询任务、打卡、巡检、事件及结论计数的汇总报告 |
+| `mission_export` | `mission_id` | 在车端受管理报告目录导出 JSON 和自包含 HTML，返回两个路径 |
+| `mission_recoveries` | 无 | 查询因任务管理节点重启而停在 `WAITING_OPERATOR` 的任务，并返回重试当前点/从下一点继续的索引 |
 
 启动示例：
 

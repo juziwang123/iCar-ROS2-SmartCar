@@ -16,6 +16,7 @@ class MissionState(str, Enum):
     CAPTURING = 'CAPTURING'
     INSPECTING = 'INSPECTING'
     RECORDING = 'RECORDING'
+    BLOCKED = 'BLOCKED'
     RECOVERING = 'RECOVERING'
     PAUSING = 'PAUSING'
     PAUSED = 'PAUSED'
@@ -42,6 +43,7 @@ _ACTIVE_STATES = frozenset({
     MissionState.CAPTURING,
     MissionState.INSPECTING,
     MissionState.RECORDING,
+    MissionState.BLOCKED,
     MissionState.RECOVERING,
     MissionState.PAUSING,
     MissionState.PAUSED,
@@ -65,7 +67,8 @@ ALLOWED_TRANSITIONS: Dict[MissionState, FrozenSet[MissionState]] = {
     ),
     MissionState.NAVIGATING: _with_terminal(
         MissionState.ARRIVAL_CONFIRMING, MissionState.RECOVERING, MissionState.PAUSING,
-        MissionState.ESTOPPED, MissionState.WAITING_OPERATOR, MissionState.COMPLETED,
+        MissionState.ESTOPPED, MissionState.WAITING_OPERATOR, MissionState.BLOCKED,
+        MissionState.COMPLETED,
     ),
     MissionState.ARRIVAL_CONFIRMING: _with_terminal(
         MissionState.CHECKING_IN, MissionState.RECORDING, MissionState.PAUSING,
@@ -88,8 +91,12 @@ ALLOWED_TRANSITIONS: Dict[MissionState, FrozenSet[MissionState]] = {
         MissionState.ESTOPPED,
     ),
     MissionState.RECOVERING: _with_terminal(
-        MissionState.NAVIGATING, MissionState.WAITING_OPERATOR, MissionState.PAUSING,
+        MissionState.NAVIGATING, MissionState.BLOCKED, MissionState.WAITING_OPERATOR, MissionState.PAUSING,
         MissionState.ESTOPPED,
+    ),
+    MissionState.BLOCKED: _with_terminal(
+        MissionState.RECOVERING, MissionState.NAVIGATING, MissionState.WAITING_OPERATOR,
+        MissionState.PAUSING, MissionState.ESTOPPED,
     ),
     MissionState.PAUSING: _with_terminal(MissionState.PAUSED, MissionState.ESTOPPED),
     MissionState.PAUSED: _with_terminal(

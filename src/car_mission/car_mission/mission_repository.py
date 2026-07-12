@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import Iterator, List
 
 
+TERMINAL_MISSION_STATES = frozenset({'COMPLETED', 'CANCELLED', 'FAILED'})
+
+
 class MissionRepository:
     def __init__(self, database_path: str) -> None:
         self.database_path = Path(database_path).expanduser()
@@ -246,6 +249,50 @@ class MissionRepository:
             'inspections': inspections,
             'events': self.list_events(mission_id),
         }
+
+    def recover_incomplete_missions(self, reason: str = 'Mission manager restarted') -> List[dict]:
+        """Safely park interrupted work; a process restart never resumes motion."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM missions WHERE state NOT IN ('COMPLETED', 'CANCELLED', 'FAILED')"
+            ).fetchall()
+            now = _utc_now()
+            for row in rows:
+                detail = f'{reason}; operator must choose retry-current or continue-next'
+                connection.execute(
+                    """UPDATE missions SET state = ?, detail = ?, updated_at = ? WHERE mission_id = ?""",
+                    ('WAITING_OPERATOR', detail, now, row['mission_id']),
+                )
+                connection.execute(
+                    '''INSERT INTO mission_events (
+                        mission_id, previous_state, state, checkpoint_id, code, detail, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                    (
+                        row['mission_id'], row['state'], 'WAITING_OPERATOR', row['checkpoint_id'],
+                        'PROCESS_RESTART_RECOVERY', detail, now,
+                    ),
+                )
+        return [dict(row) for row in rows]
+
+    def list_recoverable_missions(self) -> List[dict]:
+        """Return parked process-restart missions and safe explicit restart indexes."""
+        with self._connection() as connection:
+            rows = connection.execute(
+                '''SELECT m.* FROM missions m WHERE m.state = 'WAITING_OPERATOR'
+                   AND EXISTS (
+                     SELECT 1 FROM mission_events e WHERE e.mission_id = m.mission_id
+                     AND e.code = 'PROCESS_RESTART_RECOVERY'
+                   ) ORDER BY m.updated_at DESC'''
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item['retry_current_checkpoint_index'] = item['checkpoint_index']
+            item['continue_next_checkpoint_index'] = min(
+                item['checkpoint_index'] + 1, item['checkpoint_total']
+            )
+            result.append(item)
+        return result
 
     def _initialize(self) -> None:
         with self._connection() as connection:

@@ -25,6 +25,7 @@ setup(
     entry_points={
         'console_scripts': [
             'mission_manager = car_mission.mission_manager:main',
+            'health_monitor = car_mission.health_monitor:main',
         ],
     },
 )

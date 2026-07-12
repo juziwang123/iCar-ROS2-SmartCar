@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Set
 
 import rclpy
@@ -22,6 +23,7 @@ from car_interfaces.msg import InspectionResult, MissionStatus, PatrolEvent
 from car_interfaces.srv import MissionControl
 from car_map_manager.map_repository import MapNotFoundError, MapRepository, MapRepositoryError
 from car_mission.mission_repository import MissionRepository
+from car_mission.report_exporter import ReportExportError, export_report
 from car_mission.route_repository import RouteNotFoundError, RouteRepository
 from car_mission.route_schema import RouteValidationError, parse_route, route_to_mapping
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
@@ -208,6 +210,7 @@ class AppServer(Node):
         self.declare_parameter('mission_control_service', '/mission/control')
         self.declare_parameter('maps_root', '~/.icar/maps')
         self.declare_parameter('route_database_path', '~/.icar/icar.db')
+        self.declare_parameter('reports_root', '~/.icar/reports')
         self.declare_parameter('map_saver_service', '/map_saver/save_map')
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('map_image_format', 'pgm')
@@ -460,6 +463,18 @@ class AppServer(Node):
         if command == 'mission_report':
             mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
             return {'report': self.mission_repository.get_report(mission_id)}
+        if command == 'mission_export':
+            mission_id = nonempty_string(payload.get('mission_id'), 'mission_id')
+            try:
+                path = export_report(
+                    self.mission_repository.get_report(mission_id),
+                    str(self.get_parameter('reports_root').value),
+                )
+            except ReportExportError as exc:
+                raise ProtocolError(str(exc)) from exc
+            return {'report_path': path, 'html_path': str(Path(path).with_name('report.html'))}
+        if command == 'mission_recoveries':
+            return {'missions': self.mission_repository.list_recoverable_missions()}
         raise ProtocolError(f'unknown command: {command}')
 
     def _handle_legacy_text(self, session: ClientSession, line: str) -> None:
@@ -973,7 +988,8 @@ class AppServer(Node):
                 'map_list', 'map_get', 'map_save', 'initial_pose',
                 'route_list', 'route_get', 'route_validate', 'route_save', 'route_delete',
                 'mission_start', 'mission_pause', 'mission_resume', 'mission_cancel',
-                'mission_checkins', 'mission_inspections', 'mission_report',
+                'mission_checkins', 'mission_inspections', 'mission_report', 'mission_export',
+                'mission_recoveries',
             ],
             'modes': sorted(VALID_MODES),
             'telemetry_channels': sorted(TELEMETRY_CHANNELS),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Optional
 
 import rclpy
@@ -31,6 +32,7 @@ class SafetyMux(Node):
         self.declare_parameter('lidar_override_topic', '/lidar/override_active')
         self.declare_parameter('person_slow_topic', '/vision/person_slow')
         self.declare_parameter('person_estop_topic', '/vision/person_estop')
+        self.declare_parameter('sensor_fault_topic', '/system/sensor_fault')
         self.declare_parameter('mode_topic', '/mode_select')
         self.declare_parameter('estop_topic', '/emergency_stop')
         self.declare_parameter('effective_estop_topic', '/control/effective_estop')
@@ -41,6 +43,7 @@ class SafetyMux(Node):
         self.declare_parameter('default_mode', 'manual')
         self.declare_parameter('allow_manual_escape_when_lidar_override', True)
         self.declare_parameter('person_slow_max_linear_speed', 0.10)
+        self.declare_parameter('person_clear_delay_sec', 1.5)
 
         configured_mode = normalize_mode(self.get_parameter('default_mode').value)
         self.mode = configured_mode if is_supported_mode(configured_mode) else 'manual'
@@ -54,6 +57,8 @@ class SafetyMux(Node):
         self.lidar_override_active = False
         self.person_slow_active = False
         self.person_estop_active = False
+        self.person_clear_since: Optional[float] = None
+        self.sensor_fault_active = False
         self.manual = TimedTwist()
         self.nav = TimedTwist()
         self.vision = TimedTwist()
@@ -68,6 +73,7 @@ class SafetyMux(Node):
         self.person_slow_max_linear_speed = float(
             self.get_parameter('person_slow_max_linear_speed').value
         )
+        self.person_clear_delay_sec = max(0.0, float(self.get_parameter('person_clear_delay_sec').value))
 
         self.publisher = self.create_publisher(Twist, str(self.get_parameter('output_topic').value), 10)
         self.effective_estop_publisher = self.create_publisher(
@@ -81,6 +87,7 @@ class SafetyMux(Node):
         self.create_subscription(Bool, str(self.get_parameter('lidar_override_topic').value), self._on_lidar_override, 10)
         self.create_subscription(Bool, str(self.get_parameter('person_slow_topic').value), self._on_person_slow, 10)
         self.create_subscription(Bool, str(self.get_parameter('person_estop_topic').value), self._on_person_estop, 10)
+        self.create_subscription(Bool, str(self.get_parameter('sensor_fault_topic').value), self._on_sensor_fault, 10)
         self.create_subscription(String, str(self.get_parameter('mode_topic').value), self._on_mode, 10)
         self.create_subscription(Bool, str(self.get_parameter('estop_topic').value), self._on_estop, 10)
 
@@ -120,10 +127,19 @@ class SafetyMux(Node):
     def _on_person_estop(self, msg: Bool) -> None:
         was_active = self.person_estop_active
         self.person_estop_active = bool(msg.data)
+        self.person_clear_since = None if self.person_estop_active else time.monotonic()
         if self.person_estop_active and not was_active:
             self.get_logger().warn('Person safety stop activated')
         elif was_active and not self.person_estop_active:
             self.get_logger().info('Person safety stop cleared')
+
+    def _on_sensor_fault(self, msg: Bool) -> None:
+        was_active = self.sensor_fault_active
+        self.sensor_fault_active = bool(msg.data)
+        if self.sensor_fault_active and not was_active:
+            self.get_logger().error('Sensor health fault activated; stopping motion')
+        elif was_active and not self.sensor_fault_active:
+            self.get_logger().info('Sensor health fault cleared')
 
     def _on_estop(self, msg: Bool) -> None:
         was_latched = self.operator_estop_latched
@@ -135,9 +151,14 @@ class SafetyMux(Node):
 
     def _publish_selected_twist(self) -> None:
         msg = Twist()
+        person_effective = self.person_estop_active or (
+            self.person_clear_since is not None
+            and time.monotonic() - self.person_clear_since < self.person_clear_delay_sec
+        )
         estop_active = effective_estop(
             operator_latched=self.operator_estop_latched,
-            person_active=self.person_estop_active,
+            person_active=person_effective,
+            sensor_fault=self.sensor_fault_active,
         )
         self.effective_estop_publisher.publish(Bool(data=estop_active))
         if estop_active:
