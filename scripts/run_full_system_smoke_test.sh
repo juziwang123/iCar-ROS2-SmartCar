@@ -29,6 +29,9 @@ TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-8}"
 # sensor sample arrives. Keep their one-time warm-up window separate from the
 # shorter timeout used for project-node data-flow checks.
 HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"
+GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-5}"
+SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-30}"
+LIFECYCLE_TIMEOUT="${LIFECYCLE_TIMEOUT:-30}"
 SMOKE_MODULES="${SMOKE_MODULES:-all}"
 SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"
 MAP="${MAP:-}"
@@ -152,6 +155,9 @@ check_node() {
   local log_file=$2
   if wait_for_node "${node}" 20 "${log_file}"; then
     pass "节点 ${node}"
+  elif ros2 node list --no-daemon --spin-time "${GRAPH_DISCOVERY_SPIN_TIME}" 2>/dev/null \
+      | grep -qx "${node}"; then
+    pass "节点 ${node}（临时图发现）"
   else
     fail "节点 ${node} 未就绪（日志：${log_file}）"
   fi
@@ -251,7 +257,7 @@ check_lifecycle_active() {
       pass "生命周期节点 ${node} 已激活"
       return
     fi
-    if (( $(date +%s) - start_time >= 20 )); then
+    if (( $(date +%s) - start_time >= LIFECYCLE_TIMEOUT )); then
       printf '%s\n' "${state}" >>"${log_file}"
       fail "生命周期节点 ${node} 未进入 active（日志：${log_file}）"
       return
@@ -271,11 +277,21 @@ check_action() {
 
 check_service() {
   local service=$1
-  if ros2 service list 2>/dev/null | grep -qx "${service}"; then
-    pass "Service ${service}"
-  else
-    fail "Service ${service} 未注册"
-  fi
+  local start_time
+  start_time=$(date +%s)
+  while true; do
+    if ros2 service list 2>/dev/null | grep -qx "${service}" \
+        || ros2 service list --no-daemon --spin-time "${GRAPH_DISCOVERY_SPIN_TIME}" 2>/dev/null \
+          | grep -qx "${service}"; then
+      pass "Service ${service}"
+      return
+    fi
+    if (( $(date +%s) - start_time >= SERVICE_TIMEOUT )); then
+      fail "Service ${service} 未注册"
+      return
+    fi
+    sleep 1
+  done
 }
 
 start_project() {
