@@ -585,24 +585,37 @@ wait_runtime_status() {
     if grep -Fq "active_profile: ${active_profile}" "${output_file}" \
         && grep -Fq "state: ${expected_state}" "${output_file}" \
         && grep -Fq 'ready: true' "${output_file}"; then
-      kill "${child_pid}" >/dev/null 2>&1 || true
-      wait "${child_pid}" >/dev/null 2>&1 || true
+      stop_runtime_status_subscriber "${child_pid}"
       pass "Runtime status ${active_profile}/${expected_state}"
       return 0
     fi
     if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
-      wait "${child_pid}" >/dev/null 2>&1 || true
+      stop_runtime_status_subscriber "${child_pid}"
       fail "Runtime status subscriber exited unexpectedly (log: ${output_file})"
       return 1
     fi
     if (( $(date +%s) - start_time >= SERVICE_TIMEOUT )); then
-      kill "${child_pid}" >/dev/null 2>&1 || true
-      wait "${child_pid}" >/dev/null 2>&1 || true
+      stop_runtime_status_subscriber "${child_pid}"
       fail "Runtime status did not reach ${active_profile}/${expected_state} (log: ${output_file})"
       return 1
     fi
     sleep 0.1
   done
+}
+
+stop_runtime_status_subscriber() {
+  local child_pid=$1
+  local attempt
+  kill "${child_pid}" >/dev/null 2>&1 || true
+  for attempt in {1..20}; do
+    if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
+      wait "${child_pid}" >/dev/null 2>&1 || true
+      return
+    fi
+    sleep 0.1
+  done
+  kill -KILL "${child_pid}" >/dev/null 2>&1 || true
+  wait "${child_pid}" >/dev/null 2>&1 || true
 }
 
 run_node_manager_module() {
