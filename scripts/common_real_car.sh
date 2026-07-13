@@ -147,14 +147,17 @@ publish_stop() {
     # Never publish to /cmd_vel or /control/cmd_vel here: those are the
     # protected final outputs owned by motion_controller and safety_mux.
     # Sending zero only to mux inputs preserves the single safety outlet.
-    ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    ros2 topic pub --once /cmd_vel_vision geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    # On Foxy, ``ros2 topic pub --once`` can wait indefinitely when a source
+    # topic has no matching subscription. A short bound still gives active
+    # mux inputs repeated zero commands without allowing cleanup to hang.
+    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_vision geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     sleep 0.1
   done
-  ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
+  timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
 }
 
 stop_background_nodes() {
