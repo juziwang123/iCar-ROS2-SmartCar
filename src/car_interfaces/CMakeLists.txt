@@ -13,6 +13,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MissionStatus.msg"
   "msg/PatrolEvent.msg"
   "srv/MissionControl.srv"
+  "srv/SetRuntimeProfile.srv"
+  "msg/RuntimeStatus.msg"
   DEPENDENCIES std_msgs
 )
 

@@ -14,7 +14,7 @@
 #   WITH_YOLO=true SMOKE_MODULES=vision_yolo bash scripts/run_full_system_smoke_test.sh
 #
 # Modules: packages, unit, base, camera, control, vision_color, vision_yolo,
-#          mapping, navigation, mission.  Every hardware-dependent module
+#          mapping, navigation, mission, node_manager.  Every hardware-dependent module
 # starts and stops its own prerequisites, so it is safe to run by itself.
 
 set -u -o pipefail
@@ -70,7 +70,7 @@ module_enabled() {
 
 is_known_module() {
   case "$1" in
-    packages|unit|base|camera|control|vision_color|vision_yolo|mapping|navigation|mission)
+    packages|unit|base|camera|control|vision_color|vision_yolo|mapping|navigation|mission|node_manager)
       return 0
       ;;
     *)
@@ -348,6 +348,24 @@ run_unit_tests() {
   fi
 }
 
+start_node_manager() {
+  local log_file="${LOG_DIR}/smoke_node_manager.log"
+  stop_project
+  echo
+  echo "========================================"
+  echo "  Node manager runtime smoke test"
+  echo "  Log: ${log_file}"
+  echo "========================================"
+  setsid ros2 launch car_bringup node_manager.launch.py "$@" >"${log_file}" 2>&1 &
+  CURRENT_PID=$!
+  sleep 0.2
+  CURRENT_PGID="$(ps -o pgid= -p "${CURRENT_PID}" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -z "${CURRENT_PGID}" ]]; then
+    CURRENT_PGID="${CURRENT_PID}"
+  fi
+  sleep 2
+}
+
 prepare_base_stack() {
   local attempt=1
   while (( attempt <= HARDWARE_START_ATTEMPTS )); do
@@ -383,7 +401,7 @@ run_package_module() {
   local package
   for package in \
     car_interfaces car_control car_lidar car_vision car_navigation car_map_manager \
-    car_inspection car_mission car_app_bridge car_bringup; do
+    car_inspection car_mission car_app_bridge car_bringup car_runtime_manager; do
     check_package "${package}"
   done
 }
@@ -526,6 +544,60 @@ run_mission_module() {
   fi
 }
 
+request_runtime_profile() {
+  local profile=$1
+  local request="{profile: '${profile}', map_path: '', route_file: '', use_yolo: false}"
+  local output
+  if ! output="$(ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile "${request}" 2>&1)"; then
+    fail "Runtime profile ${profile} request failed: ${output}"
+    return 1
+  fi
+  if grep -q 'accepted: true' <<<"${output}"; then
+    pass "Runtime profile ${profile} request accepted"
+    return 0
+  fi
+  fail "Runtime profile ${profile} was rejected: ${output}"
+  return 1
+}
+
+wait_runtime_status() {
+  local active_profile=$1
+  local expected_state=$2
+  local log_file=$3
+  local start_time output_file
+  output_file="${log_file}.runtime_status.log"
+  start_time=$(date +%s)
+  while true; do
+    if capture_topic_message /runtime/status "${output_file}" transient 4 \
+        && grep -Fq "active_profile: ${active_profile}" "${output_file}" \
+        && grep -Fq "state: ${expected_state}" "${output_file}" \
+        && grep -Fq 'ready: true' "${output_file}"; then
+      pass "Runtime status ${active_profile}/${expected_state}"
+      return 0
+    fi
+    if (( $(date +%s) - start_time >= SERVICE_TIMEOUT )); then
+      fail "Runtime status did not reach ${active_profile}/${expected_state} (log: ${output_file})"
+      return 1
+    fi
+  done
+}
+
+run_node_manager_module() {
+  start_node_manager \
+    use_keyboard:=false use_camera:=false use_lidar_avoidance:=false \
+    initial_profile:=idle
+  check_node /node_manager "${LOG_DIR}/smoke_node_manager.log"
+  check_node /app_server "${LOG_DIR}/smoke_node_manager.log"
+  check_service /runtime/set_profile
+  wait_runtime_status idle IDLE "${LOG_DIR}/smoke_node_manager.log"
+  request_runtime_profile mapping || return 1
+  wait_runtime_status mapping READY "${LOG_DIR}/smoke_node_manager.log"
+  check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_node_manager.log"
+  check_service /map_saver/save_map
+  request_runtime_profile idle || return 1
+  wait_runtime_status idle IDLE "${LOG_DIR}/smoke_node_manager.log"
+}
+
 cleanup() {
   trap - EXIT INT TERM HUP
   stop_project
@@ -566,6 +638,7 @@ main() {
   run_module mapping run_mapping_module
   run_module navigation run_navigation_module
   run_module mission run_mission_module
+  run_module node_manager run_node_manager_module
 
   echo
   if (( FAILURES == 0 )); then

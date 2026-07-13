@@ -55,9 +55,11 @@ class TestAppProtocol(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             string_list(['status', 1], 'channels')
 
-    def test_v2_exposes_patrol_and_control_telemetry_channels(self):
-        self.assertEqual(PROTOCOL_VERSION, 2)
-        self.assertTrue({'pose', 'mission', 'inspection', 'event', 'control_lease'} <= TELEMETRY_CHANNELS)
+    def test_v3_exposes_patrol_control_and_runtime_telemetry_channels(self):
+        self.assertEqual(PROTOCOL_VERSION, 3)
+        self.assertTrue({
+            'pose', 'mission', 'inspection', 'event', 'control_lease', 'runtime',
+        } <= TELEMETRY_CHANNELS)
 
     def test_object_and_integer_fields_are_strict(self):
         self.assertEqual(object_value({'route_id': 'r'}, 'route')['route_id'], 'r')

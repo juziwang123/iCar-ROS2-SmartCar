@@ -1,0 +1,12 @@
+# Request an asynchronous switch between mutually-exclusive runtime profiles.
+# A successful response means that the manager accepted and queued the request;
+# callers must watch /runtime/status for READY or FAILED.
+string profile
+string map_path
+string route_file
+bool use_yolo
+---
+bool accepted
+uint32 generation
+string state
+string message

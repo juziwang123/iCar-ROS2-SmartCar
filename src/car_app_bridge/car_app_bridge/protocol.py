@@ -6,11 +6,11 @@ import math
 from typing import Any, Dict, List, Optional
 
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 VALID_MODES = frozenset({'manual', 'nav', 'vision', 'follow'})
 TELEMETRY_CHANNELS = frozenset({
     'status', 'lidar', 'vision', 'navigation', 'pose', 'mission', 'inspection', 'event',
-    'control_lease',
+    'control_lease', 'runtime',
 })
 
 

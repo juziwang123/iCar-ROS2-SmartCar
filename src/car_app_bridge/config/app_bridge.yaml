@@ -27,6 +27,8 @@
     inspection_result_topic: /inspection/result
     mission_action: execute_patrol
     mission_control_service: /mission/control
+    runtime_service: /runtime/set_profile
+    runtime_status_topic: /runtime/status
     maps_root: ~/.icar/maps
     route_database_path: ~/.icar/icar.db
     reports_root: ~/.icar/reports
