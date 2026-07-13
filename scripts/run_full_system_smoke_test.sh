@@ -318,14 +318,48 @@ start_project() {
 }
 
 stop_project() {
+  local attempt
   if [[ -z "${CURRENT_PID}" ]]; then
     return
   fi
   publish_stop
+  # ros2 launch handles SIGINT by shutting down its child graph cleanly. A
+  # bounded escalation prevents a stale vendor process from hanging the smoke
+  # script forever during cleanup.
+  if kill -0 -- "-${CURRENT_PGID}" >/dev/null 2>&1; then
+    kill -INT -- "-${CURRENT_PGID}" >/dev/null 2>&1 || true
+  elif kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+    kill -INT "${CURRENT_PID}" >/dev/null 2>&1 || true
+  fi
+  for attempt in {1..50}; do
+    if ! kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+      wait "${CURRENT_PID}" >/dev/null 2>&1 || true
+      CURRENT_PID=""
+      CURRENT_PGID=""
+      sleep 1
+      return
+    fi
+    sleep 0.1
+  done
   if kill -0 -- "-${CURRENT_PGID}" >/dev/null 2>&1; then
     kill -TERM -- "-${CURRENT_PGID}" >/dev/null 2>&1 || true
   elif kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
     kill -TERM "${CURRENT_PID}" >/dev/null 2>&1 || true
+  fi
+  for attempt in {1..30}; do
+    if ! kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+      wait "${CURRENT_PID}" >/dev/null 2>&1 || true
+      CURRENT_PID=""
+      CURRENT_PGID=""
+      sleep 1
+      return
+    fi
+    sleep 0.1
+  done
+  if kill -0 -- "-${CURRENT_PGID}" >/dev/null 2>&1; then
+    kill -KILL -- "-${CURRENT_PGID}" >/dev/null 2>&1 || true
+  elif kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+    kill -KILL "${CURRENT_PID}" >/dev/null 2>&1 || true
   fi
   wait "${CURRENT_PID}" >/dev/null 2>&1 || true
   CURRENT_PID=""
