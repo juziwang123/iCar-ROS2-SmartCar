@@ -8,9 +8,14 @@
 #
 # 用法：
 #   bash scripts/run_full_system_smoke_test.sh
-#   MAP=/data/maps/lab.yaml bash scripts/run_full_system_smoke_test.sh
-#   WITH_YOLO=true TOPIC_TIMEOUT=12 bash scripts/run_full_system_smoke_test.sh
-#   SKIP_UNIT_TESTS=true START_CAMERA=0 bash scripts/run_full_system_smoke_test.sh
+#   SMOKE_MODULES=control,mapping,navigation bash scripts/run_full_system_smoke_test.sh
+#   SMOKE_SKIP_MODULES=packages,unit,base,camera bash scripts/run_full_system_smoke_test.sh
+#   MAP=/data/maps/lab.yaml SMOKE_MODULES=navigation,mission bash scripts/run_full_system_smoke_test.sh
+#   WITH_YOLO=true SMOKE_MODULES=vision_yolo bash scripts/run_full_system_smoke_test.sh
+#
+# Modules: packages, unit, base, camera, control, vision_color, vision_yolo,
+#          mapping, navigation, mission.  Every hardware-dependent module
+# starts and stops its own prerequisites, so it is safe to run by itself.
 
 set -u -o pipefail
 
@@ -20,6 +25,8 @@ source "$(cd "$(dirname "$0")" && pwd)/common_real_car.sh"
 WITH_YOLO="${WITH_YOLO:-false}"
 SKIP_UNIT_TESTS="${SKIP_UNIT_TESTS:-false}"
 TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-8}"
+SMOKE_MODULES="${SMOKE_MODULES:-all}"
+SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"
 MAP="${MAP:-}"
 APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 FAILURES=0
@@ -37,6 +44,85 @@ fail() {
 
 skip() {
   echo "[SKIP] $*"
+}
+
+csv_contains() {
+  local values="${1//[[:space:]]/}"
+  local expected=$2
+  [[ ",${values}," == *",${expected},"* ]]
+}
+
+module_enabled() {
+  local module=$1
+  if [[ "${SMOKE_MODULES}" != "all" ]] && ! csv_contains "${SMOKE_MODULES}" "${module}"; then
+    return 1
+  fi
+  ! csv_contains "${SMOKE_SKIP_MODULES}" "${module}"
+}
+
+is_known_module() {
+  case "$1" in
+    packages|unit|base|camera|control|vision_color|vision_yolo|mapping|navigation|mission)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_module_list() {
+  local values=$1
+  local allow_all=$2
+  local item
+  local -a modules
+  if [[ -z "${values}" ]]; then
+    return 0
+  fi
+  if [[ "${values}" == "all" && "${allow_all}" == "true" ]]; then
+    return 0
+  fi
+  if csv_contains "${values}" all; then
+    fail "模块 all 只能单独用于 SMOKE_MODULES=all"
+    return 1
+  fi
+  IFS=',' read -r -a modules <<<"${values}"
+  for item in "${modules[@]}"; do
+    item="${item//[[:space:]]/}"
+    if [[ -z "${item}" ]] || ! is_known_module "${item}"; then
+      fail "未知冒烟测试模块：${item:-<empty>}"
+      return 1
+    fi
+  done
+}
+
+stop_stage() {
+  if [[ -n "${CURRENT_PID}" || ${#PIDS[@]} -gt 0 ]]; then
+    stop_project
+    publish_stop
+    stop_background_nodes
+  fi
+  PIDS=()
+  PGIDS=()
+}
+
+run_module() {
+  local module=$1
+  shift
+  if ! module_enabled "${module}"; then
+    skip "模块 ${module} 未选择"
+    return
+  fi
+
+  stop_stage
+  echo
+  echo "========================================"
+  echo " 独立测试模块：${module}"
+  echo "========================================"
+  if ! "$@"; then
+    skip "模块 ${module} 的前置硬件未就绪，已跳过其余检查"
+  fi
+  stop_stage
 }
 
 topic_has_message() {
@@ -84,12 +170,14 @@ check_topic_message() {
   local timeout_sec="${4:-${TOPIC_TIMEOUT}}"
   if ! ros2 topic list 2>/dev/null | grep -qx "${topic}"; then
     fail "话题 ${topic} 不存在（日志：${log_file}）"
-    return
+    return 1
   fi
   if capture_topic_message "${topic}" "${log_file}.topic${topic//\//_}.log" "${durability}" "${timeout_sec}"; then
     pass "话题 ${topic} 有新鲜数据"
+    return 0
   else
     fail "话题 ${topic} 在 ${TOPIC_TIMEOUT} 内没有数据（日志：${log_file}）"
+    return 1
   fi
 }
 
@@ -239,47 +327,38 @@ run_unit_tests() {
   fi
 }
 
-cleanup() {
-  trap - EXIT INT TERM HUP
-  stop_project
-  publish_stop
-  stop_background_nodes
-  publish_stop
-  echo
-  echo "测试日志目录：${LOG_DIR}"
+prepare_base_stack() {
+  local ready=true
+  start_vendor_base_stack
+  check_topic_message /scan "${LOG_DIR}/vendor_bringup.log" || ready=false
+  check_topic_message /odom "${LOG_DIR}/vendor_bringup.log" || ready=false
+  [[ "${ready}" == "true" ]]
 }
 
-main() {
-  source_ros_environment
-  prepare_logs
-  trap cleanup EXIT INT TERM HUP
+prepare_camera() {
+  START_V4L2_BRIDGE=1 start_vendor_camera
+  check_topic_message /camera/color/image_raw "${LOG_DIR}/camera.log"
+}
 
-  echo "========================================"
-  echo " iCar 全链路无运动冒烟测试"
-  echo " 不会自动驱动车辆"
-  echo "========================================"
-  echo "YOLO 检查：${WITH_YOLO}"
-  echo "话题等待超时：${TOPIC_TIMEOUT}"
-  echo
-
+run_package_module() {
+  local package
   for package in \
     car_interfaces car_control car_lidar car_vision car_navigation car_map_manager \
     car_inspection car_mission car_app_bridge car_bringup; do
     check_package "${package}"
   done
-  run_unit_tests
+}
 
-  # 厂家底盘/雷达和相机只启动一次；其余工程节点在每个互斥阶段重启。
-  start_vendor_base_stack
-  START_V4L2_BRIDGE=1 start_vendor_camera
-  check_topic_message /scan "${LOG_DIR}/vendor_bringup.log"
-  check_topic_message /odom "${LOG_DIR}/vendor_bringup.log"
-  local camera_ready=false
-  if topic_has_message /camera/color/image_raw "${LOG_DIR}/camera_probe.log"; then
-    camera_ready=true
-  fi
-  check_topic_message /camera/color/image_raw "${LOG_DIR}/camera.log"
+run_base_module() {
+  prepare_base_stack
+}
 
+run_camera_module() {
+  prepare_camera
+}
+
+run_control_module() {
+  prepare_base_stack || return 1
   start_project control_lidar \
     use_keyboard:=false \
     use_lidar_avoidance:=true \
@@ -289,42 +368,43 @@ main() {
   check_node /safety_mux "${LOG_DIR}/smoke_control_lidar.log"
   check_node /lidar_avoidance "${LOG_DIR}/smoke_control_lidar.log"
   check_node /lidar_warning "${LOG_DIR}/smoke_control_lidar.log"
-  check_topic_message /control/effective_estop "${LOG_DIR}/smoke_control_lidar.log"
-  check_topic_message /control/cmd_vel "${LOG_DIR}/smoke_control_lidar.log"
-  # The motion-controller process can appear in the ROS graph after its
-  # protected output is already live. Testing the final zero-velocity topic
-  # is both less discovery-sensitive and verifies the actual safety outlet.
-  check_topic_message /cmd_vel "${LOG_DIR}/smoke_control_lidar.log"
-  check_topic_message /lidar/warning_state "${LOG_DIR}/smoke_control_lidar.log"
+  check_topic_message /control/effective_estop "${LOG_DIR}/smoke_control_lidar.log" || true
+  check_topic_message /control/cmd_vel "${LOG_DIR}/smoke_control_lidar.log" || true
+  check_topic_message /cmd_vel "${LOG_DIR}/smoke_control_lidar.log" || true
+  check_topic_message /lidar/warning_state "${LOG_DIR}/smoke_control_lidar.log" || true
+}
 
-  if [[ "${camera_ready}" == "true" ]]; then
-    start_project vision_color \
-      use_keyboard:=false \
-      use_lidar_avoidance:=false \
-      use_mapping:=false use_navigation:=false use_patrol:=false \
-      use_vision:=true vision_use_camera_bridge:=false use_color_detector:=true use_color_tracker:=false \
-      use_yolo:=false use_app_bridge:=false
-    check_node /color_detector "${LOG_DIR}/smoke_vision_color.log"
-    check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_color.log"
-  else
-    skip "Color vision requires /camera/color/image_raw"
-  fi
-  if [[ "${WITH_YOLO}" == "true" && "${camera_ready}" == "true" ]]; then
-    # Do not run color_detector here: both detectors publish /vision/detections
-    # and would let a failed YOLO node be hidden by color-detector messages.
-    start_project vision_yolo \
-      use_keyboard:=false \
-      use_lidar_avoidance:=false \
-      use_mapping:=false use_navigation:=false use_patrol:=false \
-      use_vision:=true vision_use_camera_bridge:=false use_color_detector:=false use_color_tracker:=false \
-      use_yolo:=true use_app_bridge:=false
-    check_node /yolo_detector "${LOG_DIR}/smoke_vision_yolo.log"
-    check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_yolo.log"
-    check_topic_message /vision/person_estop "${LOG_DIR}/smoke_vision_yolo.log"
-  elif [[ "${WITH_YOLO}" == "true" ]]; then
-    skip "YOLO requires /camera/color/image_raw"
-  fi
+run_vision_color_module() {
+  prepare_camera || return 1
+  start_project vision_color \
+    use_keyboard:=false \
+    use_lidar_avoidance:=false \
+    use_mapping:=false use_navigation:=false use_patrol:=false \
+    use_vision:=true vision_use_camera_bridge:=false use_color_detector:=true use_color_tracker:=false \
+    use_yolo:=false use_app_bridge:=false
+  check_node /color_detector "${LOG_DIR}/smoke_vision_color.log"
+  check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_color.log" || true
+}
 
+run_vision_yolo_module() {
+  if [[ "${WITH_YOLO}" != "true" ]]; then
+    skip "vision_yolo 需要 WITH_YOLO=true"
+    return
+  fi
+  prepare_camera || return 1
+  start_project vision_yolo \
+    use_keyboard:=false \
+    use_lidar_avoidance:=false \
+    use_mapping:=false use_navigation:=false use_patrol:=false \
+    use_vision:=true vision_use_camera_bridge:=false use_color_detector:=false use_color_tracker:=false \
+    use_yolo:=true use_app_bridge:=false
+  check_node /yolo_detector "${LOG_DIR}/smoke_vision_yolo.log"
+  check_topic_message /vision/detections "${LOG_DIR}/smoke_vision_yolo.log" || true
+  check_topic_message /vision/person_estop "${LOG_DIR}/smoke_vision_yolo.log" || true
+}
+
+run_mapping_module() {
+  prepare_base_stack || return 1
   start_project mapping \
     use_keyboard:=false use_lidar_avoidance:=false \
     use_mapping:=true use_navigation:=false use_patrol:=false \
@@ -332,17 +412,17 @@ main() {
   check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_mapping.log"
   check_node /map_saver "${LOG_DIR}/smoke_mapping.log"
   check_lifecycle_active /map_saver "${LOG_DIR}/smoke_mapping.log"
-  # A stationary SLAM instance can legitimately wait for its first map
-  # update. Verify that it has registered the map publisher here; map
-  # contents are exercised by the mapping workflow that permits movement.
   check_topic /map "${LOG_DIR}/smoke_mapping.log"
   check_service /map_saver/save_map
+}
 
+run_navigation_module() {
   local nav_args=(
     use_keyboard:=false use_lidar_avoidance:=true
     use_mapping:=false use_navigation:=true use_mission:=false use_patrol:=false
     use_vision:=false vision_use_camera_bridge:=false use_app_bridge:=false
   )
+  prepare_base_stack || return 1
   if [[ -n "${MAP}" ]]; then
     nav_args+=("map:=${MAP}")
   fi
@@ -351,9 +431,6 @@ main() {
   check_node /bt_navigator "${LOG_DIR}/smoke_navigation.log"
   check_node /controller_server "${LOG_DIR}/smoke_navigation.log"
   check_node /planner_server "${LOG_DIR}/smoke_navigation.log"
-  # AMCL cannot create map -> odom until an operator supplies an initial
-  # pose. Requiring every Nav2 lifecycle node to be active in a no-motion
-  # smoke test would therefore fail a correctly safe vehicle.
   if [[ "${NAVIGATION_EXPECT_ACTIVE:-false}" == "true" ]]; then
     check_lifecycle_active /bt_navigator "${LOG_DIR}/smoke_navigation.log"
     check_lifecycle_active /controller_server "${LOG_DIR}/smoke_navigation.log"
@@ -363,7 +440,10 @@ main() {
   fi
   check_topic /map "${LOG_DIR}/smoke_navigation.log"
   check_action /navigate_to_pose
+}
 
+run_mission_module() {
+  local camera_ready=true
   local mission_args=(
     use_keyboard:=false use_lidar_avoidance:=true
     use_mapping:=false use_navigation:=true use_mission:=true use_patrol:=false
@@ -371,6 +451,8 @@ main() {
     use_yolo:="${WITH_YOLO}" use_app_bridge:=true
     mission_require_localization:=true
   )
+  prepare_base_stack || return 1
+  prepare_camera || camera_ready=false
   if [[ -n "${MAP}" ]]; then
     mission_args+=("map:=${MAP}")
   fi
@@ -402,6 +484,48 @@ main() {
   else
     fail "APP v2 capabilities 请求失败"
   fi
+}
+
+cleanup() {
+  trap - EXIT INT TERM HUP
+  stop_project
+  publish_stop
+  stop_background_nodes
+  publish_stop
+  echo
+  echo "测试日志目录：${LOG_DIR}"
+}
+
+main() {
+  source_ros_environment
+  prepare_logs
+  trap cleanup EXIT INT TERM HUP
+
+  if ! validate_module_list "${SMOKE_MODULES}" true \
+      || ! validate_module_list "${SMOKE_SKIP_MODULES}" false; then
+    return 1
+  fi
+
+  echo "========================================"
+  echo " iCar 全链路无运动冒烟测试"
+  echo " 不会自动驱动车辆"
+  echo "========================================"
+  echo "YOLO 检查：${WITH_YOLO}"
+  echo "话题等待超时：${TOPIC_TIMEOUT}"
+  echo "测试模块：${SMOKE_MODULES}"
+  echo "跳过模块：${SMOKE_SKIP_MODULES:-无}"
+  echo
+
+  run_module packages run_package_module
+  run_module unit run_unit_tests
+  run_module base run_base_module
+  run_module camera run_camera_module
+  run_module control run_control_module
+  run_module vision_color run_vision_color_module
+  run_module vision_yolo run_vision_yolo_module
+  run_module mapping run_mapping_module
+  run_module navigation run_navigation_module
+  run_module mission run_mission_module
 
   echo
   if (( FAILURES == 0 )); then
