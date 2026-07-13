@@ -92,16 +92,34 @@ switch_with_app() {
   printf '%s\n' "${generation}"
 }
 
+latest_runtime_generation() {
+  awk '$1 == "generation:" { generation = $2 } END { print generation }' "${STATUS_FILE}"
+}
+
 switch_with_service() {
   local profile=$1 map_path=$2 route_file=$3
-  local output generation
-  output="$(timeout 15 ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
-    "{profile: '${profile}', map_path: '${map_path}', route_file: '${route_file}', use_yolo: false}")"
-  grep -Eq '^[[:space:]]*accepted:[[:space:]]+true$|accepted=True' <<<"${output}"
+  local output generation previous_generation
+  previous_generation="$(latest_runtime_generation)"
+  [[ "${previous_generation}" =~ ^[0-9]+$ ]] || {
+    echo 'runtime status recorder has no generation before service request' >&2
+    return 1
+  }
+  if ! output="$(timeout 15 ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
+      "{profile: '${profile}', map_path: '${map_path}', route_file: '${route_file}', use_yolo: false}")"; then
+    echo "runtime service call failed: ${output}" >&2
+    return 1
+  fi
+  if [[ -n "${output}" ]] \
+      && ! grep -Eq '^[[:space:]]*accepted:[[:space:]]+true$|accepted=True' <<<"${output}"; then
+    echo "runtime service rejected request: ${output}" >&2
+    return 1
+  fi
   generation="$(sed -n \
     -e 's/^[[:space:]]*generation:[[:space:]]*\([0-9][0-9]*\)$/\1/p' \
     -e 's/.*generation=\([0-9][0-9]*\).*/\1/p' <<<"${output}" | tail -n 1)"
-  [[ -n "${generation}" ]] || { echo "missing generation: ${output}" >&2; return 1; }
+  if [[ -z "${generation}" ]]; then
+    generation=$((previous_generation + 1))
+  fi
   printf '%s\n' "${generation}"
 }
 
