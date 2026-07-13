@@ -15,3 +15,4 @@
     initial_map_path: ''
     initial_route_file: ''
     initial_use_yolo: false
+    initial_yolo_active_model: person

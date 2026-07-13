@@ -14,6 +14,8 @@ def generate_launch_description() -> LaunchDescription:
     use_yolo = LaunchConfiguration('use_yolo')
     yolo_model_path = LaunchConfiguration('yolo_model_path')
     yolo_device = LaunchConfiguration('yolo_device')
+    yolo_active_model = LaunchConfiguration('yolo_active_model')
+    yolo_active_models = LaunchConfiguration('yolo_active_models')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_color_detector', default_value='true'),
@@ -22,6 +24,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_yolo', default_value='false'),
         DeclareLaunchArgument('yolo_model_path', default_value='models/model.pt'),
         DeclareLaunchArgument('yolo_device', default_value='auto'),
+        DeclareLaunchArgument('yolo_active_model', default_value='person'),
+        DeclareLaunchArgument('yolo_active_models', default_value=''),
         DeclareLaunchArgument(
             'params_file',
             default_value=PathJoinSubstitution([
@@ -61,6 +65,10 @@ def generate_launch_description() -> LaunchDescription:
             parameters=[params_file, {
                 'model_path': yolo_model_path,
                 'device': yolo_device,
+                'model_registry.person.model_path': yolo_model_path,
+                'model_registry.person.device': yolo_device,
+                'active_model': yolo_active_model,
+                'active_models_csv': yolo_active_models,
             }],
             condition=IfCondition(use_yolo),
             output='screen',

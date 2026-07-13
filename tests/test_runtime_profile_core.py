@@ -44,6 +44,7 @@ class TestRuntimeProfileCore(unittest.TestCase):
             self.assertEqual(arguments['profile'], 'mission')
             self.assertEqual(arguments['mission_route_file'], str(route_path.resolve()))
             self.assertEqual(arguments['use_yolo'], 'true')
+            self.assertEqual(arguments['vision_yolo_active_model'], 'person')
         with self.assertRaises(RuntimeProfileError):
             RuntimeProfileRequest('mission', '/tmp/map.yaml').normalized()
 
@@ -57,6 +58,30 @@ class TestRuntimeProfileCore(unittest.TestCase):
     def test_missing_files_are_rejected_before_starting_ros_launch(self):
         with self.assertRaises(RuntimeProfileError):
             validate_runtime_files(RuntimeProfileRequest('navigation', '/tmp/missing-map.yaml'))
+
+    def test_mission_accepts_only_safe_registered_yolo_model_names(self):
+        map_path = str((Path.cwd() / 'map.yaml').resolve())
+        route_path = str((Path.cwd() / 'route.yaml').resolve())
+        request = RuntimeProfileRequest(
+            'mission', map_path, route_path, True, 'inspection'
+        ).normalized()
+        self.assertEqual(request.yolo_active_model, 'inspection')
+        with self.assertRaises(RuntimeProfileError):
+            RuntimeProfileRequest(
+                'mission', map_path, route_path, True, 'inspection;bad'
+            ).normalized()
+
+    def test_mission_passes_multiple_registered_models_as_a_launch_argument(self):
+        request = RuntimeProfileRequest(
+            'mission',
+            str((Path.cwd() / 'map.yaml').resolve()),
+            str((Path.cwd() / 'route.yaml').resolve()),
+            True,
+            'person',
+            ('person', 'inspection'),
+        )
+        arguments = profile_launch_arguments(request)
+        self.assertEqual(arguments['vision_yolo_active_models'], 'person,inspection')
 
 
 if __name__ == '__main__':

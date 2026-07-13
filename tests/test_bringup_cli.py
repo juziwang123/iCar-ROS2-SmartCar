@@ -15,7 +15,7 @@ class TestBringupCliCore(unittest.TestCase):
     def test_mission_profile_uses_compatible_bringup_arguments(self):
         profile = build_launch_profile(
             'mission', map_file='/maps/lab.yaml', route_file='/routes/night.yaml',
-            use_app_bridge=True, use_yolo=True,
+            use_app_bridge=True, use_yolo=True, yolo_active_model='inspection',
         )
         self.assertEqual(profile.arguments['use_navigation'], 'true')
         self.assertEqual(profile.arguments['use_mission'], 'true')
@@ -23,6 +23,7 @@ class TestBringupCliCore(unittest.TestCase):
         self.assertEqual(profile.arguments['mission_require_localization'], 'true')
         self.assertEqual(profile.arguments['mission_route_file'], '/routes/night.yaml')
         self.assertEqual(profile.arguments['use_app_bridge'], 'true')
+        self.assertEqual(profile.arguments['vision_yolo_active_model'], 'inspection')
 
     def test_route_is_rejected_for_non_mission_profile(self):
         with self.assertRaises(CliError):

@@ -5,6 +5,11 @@ string profile
 string map_path
 string route_file
 bool use_yolo
+# Registered car_vision model name; used only when use_yolo is true.
+string yolo_active_model
+# Optional registered model names to run concurrently; takes precedence over
+# yolo_active_model when non-empty.
+string[] yolo_active_models
 ---
 bool accepted
 uint32 generation

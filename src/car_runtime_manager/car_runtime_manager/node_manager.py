@@ -109,6 +109,7 @@ class NodeManager(Node):
         self.declare_parameter('initial_map_path', '')
         self.declare_parameter('initial_route_file', '')
         self.declare_parameter('initial_use_yolo', False)
+        self.declare_parameter('initial_yolo_active_model', 'person')
 
     def _topic(self, parameter: str) -> str:
         return str(self.get_parameter(parameter).value)
@@ -130,6 +131,7 @@ class NodeManager(Node):
             if profile in {'navigation', 'mission'} else '',
             str(self.get_parameter('initial_route_file').value) if profile == 'mission' else '',
             bool(self.get_parameter('initial_use_yolo').value) if profile == 'mission' else False,
+            str(self.get_parameter('initial_yolo_active_model').value),
         )
         try:
             self._queue_transition(self._complete_defaults(request))
@@ -142,6 +144,8 @@ class NodeManager(Node):
             request.map_path,
             request.route_file,
             request.use_yolo,
+            request.yolo_active_model,
+            tuple(request.yolo_active_models),
         )
         try:
             generation = self._queue_transition(self._complete_defaults(candidate))
@@ -168,7 +172,10 @@ class NodeManager(Node):
             map_path = str(self.get_parameter('initial_map_path').value)
         if profile == 'mission' and not route_file:
             route_file = str(self.get_parameter('initial_route_file').value)
-        return RuntimeProfileRequest(profile, map_path, route_file, request.use_yolo)
+        return RuntimeProfileRequest(
+            profile, map_path, route_file, request.use_yolo, request.yolo_active_model,
+            request.yolo_active_models,
+        )
 
     def _queue_transition(self, request: RuntimeProfileRequest) -> int:
         request = validate_runtime_files(request)
