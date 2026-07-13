@@ -40,6 +40,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('prepare_base_stack || return 1', script)
         self.assertIn('prepare_camera || return 1', script)
         self.assertIn('厂家底盘尚未产生完整传感器数据，重启后重试', script)
+        self.assertIn('registration is the stable, end-to-end readiness contract', script)
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
