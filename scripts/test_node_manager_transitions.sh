@@ -92,7 +92,7 @@ switch_with_service() {
   local profile=$1 map_path=$2 route_file=$3
   local output generation
   output="$(timeout 15 ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
-    \"{profile: '${profile}', map_path: '${map_path}', route_file: '${route_file}', use_yolo: false}\")"
+    "{profile: '${profile}', map_path: '${map_path}', route_file: '${route_file}', use_yolo: false}")"
   grep -Eq '^[[:space:]]*accepted:[[:space:]]+true$' <<<"${output}"
   generation="$(sed -n 's/^[[:space:]]*generation:[[:space:]]*\([0-9][0-9]*\)$/\1/p' <<<"${output}" | tail -n 1)"
   [[ -n "${generation}" ]] || { echo "missing generation: ${output}" >&2; return 1; }
