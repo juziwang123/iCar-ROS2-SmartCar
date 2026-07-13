@@ -550,7 +550,7 @@ request_runtime_profile() {
   local request="{profile: '${profile}', map_path: '', route_file: '', use_yolo: false}"
   local output
   if ! output="$(timeout "${RUNTIME_SERVICE_TIMEOUT}" \
-      ros2 --no-daemon service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
+      ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
       "${request}" 2>&1)"; then
     fail "Runtime profile ${profile} request failed: ${output}"
     return 1
@@ -572,7 +572,7 @@ wait_runtime_status() {
   local start_time output_file child_pid
   output_file="${log_file}.runtime_status.log"
   : >"${output_file}"
-  env PYTHONUNBUFFERED=1 ros2 --no-daemon topic echo /runtime/status \
+  env PYTHONUNBUFFERED=1 ros2 topic echo /runtime/status \
     --qos-reliability reliable --qos-durability transient_local >"${output_file}" 2>&1 &
   child_pid=$!
   start_time=$(date +%s)
