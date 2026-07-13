@@ -24,22 +24,30 @@ MAP_ID="${MAP_ID:-}"
 MAP_PATH="${MAP_PATH:-}"
 ROUTE_FILE="${ROUTE_FILE:-}"
 LOG_FILE="${LOG_DIR}/node_manager_transitions.log"
+STATUS_FILE="${LOG_DIR}/node_manager_runtime_status.log"
+STATUS_SUBSCRIBER_PID=""
 
 cleanup() {
   trap - EXIT INT TERM HUP
+  if [[ -n "${STATUS_SUBSCRIBER_PID}" ]]; then
+    kill "${STATUS_SUBSCRIBER_PID}" >/dev/null 2>&1 || true
+    wait "${STATUS_SUBSCRIBER_PID}" >/dev/null 2>&1 || true
+  fi
   publish_stop
   stop_background_nodes
   publish_stop
 }
 
+start_status_recorder() {
+  : >"${STATUS_FILE}"
+  env PYTHONUNBUFFERED=1 ros2 topic echo /runtime/status --qos-reliability reliable \
+    --qos-durability transient_local >"${STATUS_FILE}" 2>&1 &
+  STATUS_SUBSCRIBER_PID=$!
+}
+
 wait_for_runtime_state() {
   local profile=$1 state=$2 generation=$3
-  local status_file="${LOG_DIR}/runtime_status_${generation}.log"
-  local subscriber_pid start_time
-  : >"${status_file}"
-  env PYTHONUNBUFFERED=1 ros2 topic echo /runtime/status --qos-reliability reliable \
-    --qos-durability transient_local >"${status_file}" 2>&1 &
-  subscriber_pid=$!
+  local start_time
   start_time=$(date +%s)
   while (( $(date +%s) - start_time < PROFILE_TIMEOUT )); do
     if awk -v profile="${profile}" -v state="${state}" -v generation="${generation}" '
@@ -53,16 +61,12 @@ wait_for_runtime_state() {
         }
       }
       END { exit(found ? 0 : 1) }
-    ' "${status_file}"; then
-      kill "${subscriber_pid}" >/dev/null 2>&1 || true
-      wait "${subscriber_pid}" >/dev/null 2>&1 || true
+    ' "${STATUS_FILE}"; then
       echo "[PASS] ${profile}/${state}, generation ${generation}"
       return 0
     fi
     sleep 0.2
   done
-  kill "${subscriber_pid}" >/dev/null 2>&1 || true
-  wait "${subscriber_pid}" >/dev/null 2>&1 || true
   echo "[FAIL] /runtime/status did not reach ${profile}/${state}, generation ${generation}" >&2
   return 1
 }
@@ -110,6 +114,8 @@ main() {
   wait_for_node /node_manager 30 "${LOG_FILE}"
   wait_for_node /app_server 30 "${LOG_FILE}"
   timeout 30 bash -c 'until ros2 service list | grep -qx /runtime/set_profile; do sleep 1; done'
+  start_status_recorder
+  sleep 1
 
   local generation
   generation="$(switch_with_app mapping)"
