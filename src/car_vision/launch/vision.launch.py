@@ -1,61 +1,149 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
+from launch.substitutions import LaunchConfiguration
+from launch.actions import DeclareLaunchArgument
+import launch.conditions
 
 
-def generate_launch_description() -> LaunchDescription:
-    params_file = LaunchConfiguration('params_file')
-    use_color_detector = LaunchConfiguration('use_color_detector')
-    use_color_tracker = LaunchConfiguration('use_color_tracker')
-    use_yolo = LaunchConfiguration('use_yolo')
-    use_person_detector = LaunchConfiguration('use_person_detector')
-
+def generate_launch_description():
+    image_topic = LaunchConfiguration('image_topic', default='/camera/color/image_raw')
+    target_color = LaunchConfiguration('target_color', default='red')
+    
     return LaunchDescription([
-        DeclareLaunchArgument('use_color_detector', default_value='true'),
-        DeclareLaunchArgument('use_color_tracker', default_value='false'),
-        DeclareLaunchArgument('use_yolo', default_value='false'),
-        DeclareLaunchArgument('use_person_detector', default_value='false'),
         DeclareLaunchArgument(
-            'params_file',
-            default_value=PathJoinSubstitution([
-                FindPackageShare('car_vision'),
-                'config',
-                'vision.yaml',
-            ]),
+            'image_topic',
+            default_value='/camera/color/image_raw',
+            description='Image topic name'
         ),
+        DeclareLaunchArgument(
+            'target_color',
+            default_value='red',
+            description='Target color for color detection'
+        ),
+        DeclareLaunchArgument(
+            'mode',
+            default_value='color_tracking',
+            description='Operation mode: color_tracking, yolo_detection, line_following, defect_detection, person_detection, qrcode_detection'
+        ),
+        
         Node(
             package='car_vision',
             executable='color_detector',
             name='color_detector',
-            parameters=[params_file],
-            condition=IfCondition(use_color_detector),
-            output='screen',
+            parameters=[{
+                'image_topic': image_topic,
+                'target_color': target_color,
+                'min_area': 100
+            }],
+            remappings=[
+                ('/camera/color/image_raw', image_topic)
+            ],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('color_tracking')
+            )
         ),
+        
         Node(
             package='car_vision',
             executable='color_tracker',
             name='color_tracker',
-            parameters=[params_file],
-            condition=IfCondition(use_color_tracker),
-            output='screen',
+            parameters=[{
+                'image_width': 640,
+                'image_height': 480,
+                'kp_angular': 0.005,
+                'kp_linear': 0.001,
+                'max_linear_speed': 0.3,
+                'max_angular_speed': 0.5
+            }],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('color_tracking')
+            )
         ),
+        
         Node(
             package='car_vision',
             executable='yolo_detector',
             name='yolo_detector',
-            parameters=[params_file],
-            condition=IfCondition(use_yolo),
-            output='screen',
+            parameters=[{
+                'image_topic': image_topic,
+                'confidence_threshold': 0.5,
+                'device': 'cuda'
+            }],
+            remappings=[
+                ('/camera/color/image_raw', image_topic)
+            ],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('yolo_detection')
+            )
         ),
+        
+        Node(
+            package='car_vision',
+            executable='line_follower',
+            name='line_follower',
+            parameters=[{
+                'image_topic': image_topic,
+                'image_width': 640,
+                'image_height': 480,
+                'kp_angular': 0.008,
+                'max_linear_speed': 0.2,
+                'line_color': 'black'
+            }],
+            remappings=[
+                ('/camera/color/image_raw', image_topic)
+            ],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('line_following')
+            )
+        ),
+        
+        Node(
+            package='car_vision',
+            executable='defect_detector',
+            name='defect_detector',
+            parameters=[{
+                'image_topic': image_topic,
+                'min_defect_area': 100
+            }],
+            remappings=[
+                ('/camera/color/image_raw', image_topic)
+            ],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('defect_detection')
+            )
+        ),
+        
         Node(
             package='car_vision',
             executable='person_detector',
             name='person_detector',
-            parameters=[params_file],
-            condition=IfCondition(use_person_detector),
-            output='screen',
+            parameters=[{
+                'image_topic': image_topic,
+                'model_name': 'yolov8n',
+                'confidence_threshold': 0.5,
+                'device': 'cpu',
+                'image_size': 640
+            }],
+            remappings=[
+                ('/camera/color/image_raw', image_topic)
+            ],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('person_detection')
+            )
+        ),
+        
+        Node(
+            package='car_vision',
+            executable='qrcode_detector',
+            name='qrcode_detector',
+            parameters=[{
+                'image_topic': image_topic
+            }],
+            remappings=[
+                ('/camera/color/image_raw', image_topic)
+            ],
+            condition=launch.conditions.IfCondition(
+                LaunchConfiguration('mode').equals('qrcode_detection')
+            )
         ),
     ])

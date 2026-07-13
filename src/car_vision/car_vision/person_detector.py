@@ -1,230 +1,235 @@
-"""Person Detection Node using Ultralytics YOLOv8.
-
-Subscribes to a camera image topic, runs YOLO inference, and publishes
-person detection results.  Only the COCO ``person`` class (class 0) is
-reported; all other classes are ignored.
-
-Publishes
----------
-- ``/vision/person_detected`` (std_msgs/Bool) — whether at least one person
-  is visible above the confidence threshold.
-- ``/vision/person_detections`` (std_msgs/String) — JSON payload with full
-  detection details (bounding boxes, confidence scores, count).
-- ``/vision/person_target`` (geometry_msgs/PointStamped) — normalised position
-  (-1 … 1) of the closest person (largest bounding-box area) for downstream
-  tracking / avoidance nodes.
-"""
-
-from __future__ import annotations
-
-import json
-import os
-from pathlib import Path
-from typing import Optional, Sequence
-
 import rclpy
-from cv_bridge import CvBridge
-from geometry_msgs.msg import PointStamped
 from rclpy.node import Node
 from sensor_msgs.msg import Image
-from std_msgs.msg import Bool, String
+from vision_msgs.msg import Detection2DArray, Detection2D, BoundingBox2D
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import String
+import cv2
+import numpy as np
+from cv_bridge import CvBridge
+import os
 
 
 class PersonDetector(Node):
-    """ROS2 node that detects persons in camera images using YOLO."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__('person_detector')
-
-        # --- Parameters ---
+        
         self.declare_parameter('image_topic', '/camera/color/image_raw')
-        self.declare_parameter('detection_topic', '/vision/person_detections')
-        self.declare_parameter('detection_flag_topic', '/vision/person_detected')
-        self.declare_parameter('target_topic', '/vision/person_target')
-        self.declare_parameter('model_name', 'yolov8n.pt')
+        self.declare_parameter('model_name', 'yolov8n')
         self.declare_parameter('confidence_threshold', 0.5)
-        self.declare_parameter('input_width', 640)
-        self.declare_parameter('input_height', 640)
-        self.declare_parameter('person_class_id', 0)  # COCO dataset
-
-        # --- Dependencies ---
-        self._cv2 = self._load_cv2()
-        self._bridge = CvBridge()
-        self._model = self._load_model()
-
-        # --- Publishers ---
-        self._detection_pub = self.create_publisher(
-            String,
-            str(self.get_parameter('detection_topic').value),
-            10,
-        )
-        self._flag_pub = self.create_publisher(
-            Bool,
-            str(self.get_parameter('detection_flag_topic').value),
-            10,
-        )
-        self._target_pub = self.create_publisher(
-            PointStamped,
-            str(self.get_parameter('target_topic').value),
-            10,
-        )
-
-        # --- Subscriber ---
-        self.create_subscription(
-            Image,
-            str(self.get_parameter('image_topic').value),
-            self._on_image,
-            10,
-        )
-
-        self.get_logger().info(
-            f'Person detector started (model={self.get_parameter("model_name").value})'
-        )
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _load_cv2():
-        """Lazy-import OpenCV so the node can degrade gracefully."""
-        try:
-            import cv2
-            return cv2
-        except ImportError:
-            return None
+        self.declare_parameter('device', 'cpu')
+        self.declare_parameter('image_size', 640)
+        
+        self.image_topic = self.get_parameter('image_topic').get_parameter_value().string_value
+        self.model_name = self.get_parameter('model_name').get_parameter_value().string_value
+        self.confidence_threshold = self.get_parameter('confidence_threshold').get_parameter_value().double_value
+        self.device = self.get_parameter('device').get_parameter_value().string_value
+        self.image_size = self.get_parameter('image_size').get_parameter_value().integer_value
+        
+        self.bridge = CvBridge()
+        
+        self.detection_pub = self.create_publisher(Detection2DArray, '/person_detections', 10)
+        self.person_pose_pub = self.create_publisher(PoseStamped, '/person_pose', 10)
+        self.detection_info_pub = self.create_publisher(String, '/person_info', 10)
+        
+        self.image_sub = self.create_subscription(
+            Image, self.image_topic, self.image_callback, 10)
+        
+        self.model = None
+        self.class_names = []
+        self._load_model()
+        
+        self.get_logger().info('PersonDetector initialized')
 
     def _load_model(self):
-        """Load the YOLO model via ultralytics (auto-downloaded if needed).
-
-        Returns ``None`` if ultralytics is not installed or the model
-        cannot be loaded — the node will publish empty detections in that
-        case rather than crash.
-        """
-        model_name = str(self.get_parameter('model_name').value)
-
-        # Resolve path: explicit > package models/ > ultralytics hub
-        model_path = model_name
-        if not os.path.isfile(model_path):
-            pkg_models = Path(__file__).resolve().parent.parent / 'models'
-            candidate = pkg_models / model_name
-            if candidate.is_file():
-                model_path = str(candidate)
-            # otherwise fall through — ultralytics auto-downloads
-
         try:
             from ultralytics import YOLO
-        except ImportError:
-            self.get_logger().error(
-                'ultralytics package not found. Install: pip install ultralytics'
+            
+            full_model_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'models',
+                f'{self.model_name}.pt'
             )
-            return None
+            
+            if os.path.exists(full_model_path):
+                self.get_logger().info(f'Loading local model: {full_model_path}')
+                self.model = YOLO(full_model_path)
+            else:
+                self.get_logger().info(f'Loading pretrained model: {self.model_name}')
+                self.model = YOLO(self.model_name)
+            
+            self.model.to(self.device)
+            self.model.conf = self.confidence_threshold
+            self.class_names = self.model.names
+            
+            self.get_logger().info(f'Model loaded successfully')
+            
+        except ImportError:
+            self.get_logger().error('ultralytics library not installed')
+            self._load_opencv_dnn_model()
+        except Exception as e:
+            self.get_logger().error(f'Failed to load model: {e}')
 
-        self.get_logger().info(f'Loading YOLO model from {model_path}')
+    def _load_opencv_dnn_model(self):
         try:
-            return YOLO(model_path)
-        except Exception as exc:
-            self.get_logger().error(f'Failed to load YOLO model: {exc}')
-            return None
+            onnx_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'models',
+                'yolov8n.onnx'
+            )
+            
+            if os.path.exists(onnx_path):
+                self.model = cv2.dnn.readNetFromONNX(onnx_path)
+                self.class_names = [
+                    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train',
+                    'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign',
+                    'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep',
+                    'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella'
+                ]
+                self.get_logger().info('OpenCV DNN model loaded')
+            else:
+                self.get_logger().error('ONNX model not found')
+        except Exception as e:
+            self.get_logger().error(f'Failed to load OpenCV DNN model: {e}')
 
-    # ------------------------------------------------------------------
-    # Callback
-    # ------------------------------------------------------------------
-
-    def _on_image(self, msg: Image) -> None:
-        if self._model is None:
-            self._publish_empty()
+    def image_callback(self, msg):
+        if self.model is None:
             return
-
+        
         try:
-            cv_image = self._bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        except Exception as exc:
-            self.get_logger().error(f'cv_bridge conversion failed: {exc}')
-            self._publish_empty()
+            cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+        except Exception as e:
+            self.get_logger().error(f'Failed to convert image: {e}')
             return
+        
+        results = self._inference(cv_image)
+        
+        person_results = [r for r in results if r['class_name'] == 'person']
+        
+        detection_array = Detection2DArray()
+        detection_array.header = msg.header
+        
+        detection_info = []
+        closest_person = None
+        min_distance = float('inf')
+        
+        for result in person_results:
+            detection = Detection2D()
+            detection.header = msg.header
+            
+            bbox = BoundingBox2D()
+            bbox.center.x = result['x_center']
+            bbox.center.y = result['y_center']
+            bbox.size_x = result['width']
+            bbox.size_y = result['height']
+            detection.bbox = bbox
+            
+            detection_array.detections.append(detection)
+            
+            detection_info.append(
+                f"person({result['confidence']:.2f})"
+            )
+            
+            area = result['width'] * result['height']
+            if area > min_distance:
+                min_distance = area
+                closest_person = result
+        
+        self.detection_pub.publish(detection_array)
+        
+        info_msg = String()
+        info_msg.data = ','.join(detection_info) if detection_info else 'no_persons'
+        self.detection_info_pub.publish(info_msg)
+        
+        if closest_person:
+            pose_msg = PoseStamped()
+            pose_msg.header = msg.header
+            pose_msg.pose.position.x = closest_person['x_center']
+            pose_msg.pose.position.y = closest_person['y_center']
+            pose_msg.pose.position.z = 0.0
+            self.person_pose_pub.publish(pose_msg)
+        
+        self.get_logger().debug(f'Detected {len(person_results)} persons')
 
-        height, width = cv_image.shape[:2]
+    def _inference(self, image):
+        results = []
+        
+        if hasattr(self.model, 'names') and hasattr(self.model, 'predict'):
+            try:
+                outputs = self.model.predict(
+                    image,
+                    imgsz=self.image_size,
+                    conf=self.confidence_threshold,
+                    device=self.device,
+                    verbose=False
+                )
+                
+                for output in outputs:
+                    for box in output.boxes:
+                        x_min, y_min, x_max, y_max = box.xyxy[0].tolist()
+                        conf = box.conf[0].item()
+                        class_id = int(box.cls[0].item())
+                        class_name = self.class_names[class_id]
+                        
+                        x_center = (x_min + x_max) / 2
+                        y_center = (y_min + y_max) / 2
+                        width = x_max - x_min
+                        height = y_max - y_min
+                        
+                        results.append({
+                            'x_center': x_center,
+                            'y_center': y_center,
+                            'width': width,
+                            'height': height,
+                            'confidence': conf,
+                            'class_id': class_id,
+                            'class_name': class_name
+                        })
+            except Exception as e:
+                self.get_logger().error(f'Inference failed: {e}')
+        elif self.model is not None:
+            try:
+                blob = cv2.dnn.blobFromImage(
+                    image, 1/255.0, (self.image_size, self.image_size), swapRB=True, crop=False)
+                self.model.setInput(blob)
+                outputs = self.model.forward()
+                
+                height, width = image.shape[:2]
+                
+                for output in outputs:
+                    for detection in output:
+                        scores = detection[5:]
+                        class_id = np.argmax(scores)
+                        confidence = scores[class_id]
+                        
+                        if confidence > self.confidence_threshold:
+                            center_x = int(detection[0] * width)
+                            center_y = int(detection[1] * height)
+                            w = int(detection[2] * width)
+                            h = int(detection[3] * height)
+                            
+                            results.append({
+                                'x_center': center_x,
+                                'y_center': center_y,
+                                'width': w,
+                                'height': h,
+                                'confidence': confidence,
+                                'class_id': class_id,
+                                'class_name': self.class_names[class_id]
+                            })
+            except Exception as e:
+                self.get_logger().error(f'OpenCV DNN inference failed: {e}')
+        
+        return results
 
-        # --- Inference ---
-        results = self._model(
-            cv_image,
-            imgsz=(
-                int(self.get_parameter('input_height').value),
-                int(self.get_parameter('input_width').value),
-            ),
-            verbose=False,
-        )[0]
 
-        person_class_id = int(self.get_parameter('person_class_id').value)
-        conf_threshold = float(self.get_parameter('confidence_threshold').value)
-
-        persons: list[dict] = []
-        person_detected = False
-
-        if results.boxes is not None:
-            boxes = results.boxes
-            for i in range(len(boxes)):
-                cls_id = int(boxes.cls[i].item())
-                conf = float(boxes.conf[i].item())
-
-                if cls_id == person_class_id and conf >= conf_threshold:
-                    person_detected = True
-                    x1, y1, x2, y2 = boxes.xyxy[i].tolist()
-                    persons.append({
-                        'label': 'person',
-                        'confidence': round(conf, 4),
-                        'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                        'center_x': round((x1 + x2) / 2.0, 2),
-                        'center_y': round((y1 + y2) / 2.0, 2),
-                        'width': round(x2 - x1, 2),
-                        'height': round(y2 - y1, 2),
-                    })
-
-        # --- Publish ---
-        self._flag_pub.publish(Bool(data=person_detected))
-
-        det_msg = String()
-        det_msg.data = json.dumps({
-            'detected': person_detected,
-            'count': len(persons),
-            'persons': persons,
-            'image_width': width,
-            'image_height': height,
-        })
-        self._detection_pub.publish(det_msg)
-
-        # Publish target: closest person (largest bounding box)
-        if person_detected and persons:
-            closest = max(persons, key=lambda p: p['width'] * p['height'])
-            target = PointStamped()
-            target.header = msg.header
-            target.point.x = (closest['center_x'] - width / 2.0) / (width / 2.0)
-            target.point.y = (closest['center_y'] - height / 2.0) / (height / 2.0)
-            target.point.z = closest['confidence']
-            self._target_pub.publish(target)
-
-    def _publish_empty(self) -> None:
-        """Publish 'no detection' on all topics when the model is unavailable."""
-        self._flag_pub.publish(Bool(data=False))
-        self._detection_pub.publish(String(data=json.dumps({
-            'detected': False,
-            'count': 0,
-            'persons': [],
-            'image_width': 0,
-            'image_height': 0,
-        })))
-
-
-def main(args: Optional[Sequence[str]] = None) -> None:
+def main(args=None):
     rclpy.init(args=args)
     node = PersonDetector()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == '__main__':
