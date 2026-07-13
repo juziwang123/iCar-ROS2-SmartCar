@@ -150,14 +150,14 @@ publish_stop() {
     # On Foxy, ``ros2 topic pub --once`` can wait indefinitely when a source
     # topic has no matching subscription. A short bound still gives active
     # mux inputs repeated zero commands without allowing cleanup to hang.
-    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
-    timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /cmd_vel_vision geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-0.5}" ros2 topic pub --once /cmd_vel_manual geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-0.5}" ros2 topic pub --once /cmd_vel_nav geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-0.5}" ros2 topic pub --once /cmd_vel_lidar geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-0.5}" ros2 topic pub --once /cmd_vel_follow geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
+    timeout "${STOP_PUBLISH_TIMEOUT:-0.5}" ros2 topic pub --once /cmd_vel_vision geometry_msgs/msg/Twist "{}" >/dev/null 2>&1 || true
     sleep 0.1
   done
-  timeout "${STOP_PUBLISH_TIMEOUT:-2}" ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
+  timeout "${STOP_PUBLISH_TIMEOUT:-0.5}" ros2 topic pub --once /mode_select std_msgs/msg/String "{data: manual}" >/dev/null 2>&1 || true
 }
 
 stop_background_nodes() {
