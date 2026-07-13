@@ -30,6 +30,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('check_topic_message /cmd_vel "${LOG_DIR}/smoke_control_lidar.log"', script)
         self.assertIn('SMOKE_MODULES="${SMOKE_MODULES:-all}"', script)
         self.assertIn('SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"', script)
+        self.assertIn('HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"', script)
         self.assertIn('run_module mapping run_mapping_module', script)
         self.assertIn('run_module navigation run_navigation_module', script)
         self.assertIn('prepare_base_stack || return 1', script)

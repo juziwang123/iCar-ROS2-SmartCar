@@ -25,6 +25,10 @@ source "$(cd "$(dirname "$0")" && pwd)/common_real_car.sh"
 WITH_YOLO="${WITH_YOLO:-false}"
 SKIP_UNIT_TESTS="${SKIP_UNIT_TESTS:-false}"
 TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-8}"
+# Factory base and camera drivers can register their topics before the first
+# sensor sample arrives. Keep their one-time warm-up window separate from the
+# shorter timeout used for project-node data-flow checks.
+HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"
 SMOKE_MODULES="${SMOKE_MODULES:-all}"
 SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"
 MAP="${MAP:-}"
@@ -330,14 +334,16 @@ run_unit_tests() {
 prepare_base_stack() {
   local ready=true
   start_vendor_base_stack
-  check_topic_message /scan "${LOG_DIR}/vendor_bringup.log" || ready=false
-  check_topic_message /odom "${LOG_DIR}/vendor_bringup.log" || ready=false
+  check_topic_message /scan "${LOG_DIR}/vendor_bringup.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" \
+    || ready=false
+  check_topic_message /odom "${LOG_DIR}/vendor_bringup.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" \
+    || ready=false
   [[ "${ready}" == "true" ]]
 }
 
 prepare_camera() {
   START_V4L2_BRIDGE=1 start_vendor_camera
-  check_topic_message /camera/color/image_raw "${LOG_DIR}/camera.log"
+  check_topic_message /camera/color/image_raw "${LOG_DIR}/camera.log" volatile "${HARDWARE_TOPIC_TIMEOUT}"
 }
 
 run_package_module() {
