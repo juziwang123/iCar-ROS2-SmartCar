@@ -547,17 +547,22 @@ run_mission_module() {
 
 request_runtime_profile() {
   local profile=$1
-  local request="{profile: '${profile}', map_path: '', route_file: '', use_yolo: false}"
+  local request="{\"cmd\":\"runtime_switch\",\"profile\":\"${profile}\"}"
   local output
+  local client_auth_args=()
+  if [[ -n "${APP_BRIDGE_TOKEN}" ]]; then
+    client_auth_args=(--token "${APP_BRIDGE_TOKEN}")
+  fi
+  # Test the deployed control path (APP -> Bridge -> Manager), not a
+  # short-lived ros2 CLI client whose graph discovery is flaky on Foxy.
   if ! output="$(timeout "${RUNTIME_SERVICE_TIMEOUT}" \
-      ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
-      "${request}" 2>&1)"; then
+      python3 "${ROOT_DIR}/scripts/app_bridge_client.py" --host 127.0.0.1 \
+      --timeout "${RUNTIME_SERVICE_TIMEOUT}" "${client_auth_args[@]}" \
+      --request "${request}" 2>&1)"; then
     fail "Runtime profile ${profile} request failed: ${output}"
     return 1
   fi
-  # Foxy CLI prints service replies as a Python repr (accepted=True), while
-  # newer releases use YAML (accepted: true). Accept both stable forms.
-  if grep -Eq 'accepted[=:][[:space:]]*(true|True)' <<<"${output}"; then
+  if grep -Fq '"accepted": true' <<<"${output}"; then
     pass "Runtime profile ${profile} request accepted"
     return 0
   fi
