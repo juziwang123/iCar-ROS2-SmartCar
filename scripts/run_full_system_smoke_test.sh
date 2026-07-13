@@ -14,7 +14,7 @@
 #   WITH_YOLO=true SMOKE_MODULES=vision_yolo bash scripts/run_full_system_smoke_test.sh
 #
 # Modules: packages, unit, base, camera, control, vision_color, vision_yolo,
-#          mapping, navigation, mission.  Every hardware-dependent module
+#          mapping, navigation, mission, node_manager.  Every hardware-dependent module
 # starts and stops its own prerequisites, so it is safe to run by itself.
 
 set -u -o pipefail
@@ -32,6 +32,7 @@ HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"
 HARDWARE_START_ATTEMPTS="${HARDWARE_START_ATTEMPTS:-2}"
 GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-5}"
 SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-30}"
+RUNTIME_SERVICE_TIMEOUT="${RUNTIME_SERVICE_TIMEOUT:-15}"
 LIFECYCLE_TIMEOUT="${LIFECYCLE_TIMEOUT:-30}"
 SMOKE_MODULES="${SMOKE_MODULES:-all}"
 SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"
@@ -40,6 +41,7 @@ APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 FAILURES=0
 CURRENT_PID=""
 CURRENT_PGID=""
+RUNTIME_LAST_GENERATION=""
 
 pass() {
   echo "[PASS] $*"
@@ -70,7 +72,7 @@ module_enabled() {
 
 is_known_module() {
   case "$1" in
-    packages|unit|base|camera|control|vision_color|vision_yolo|mapping|navigation|mission)
+    packages|unit|base|camera|control|vision_color|vision_yolo|mapping|navigation|mission|node_manager)
       return 0
       ;;
     *)
@@ -317,14 +319,48 @@ start_project() {
 }
 
 stop_project() {
+  local attempt
   if [[ -z "${CURRENT_PID}" ]]; then
     return
   fi
   publish_stop
+  # ros2 launch handles SIGINT by shutting down its child graph cleanly. A
+  # bounded escalation prevents a stale vendor process from hanging the smoke
+  # script forever during cleanup.
+  if kill -0 -- "-${CURRENT_PGID}" >/dev/null 2>&1; then
+    kill -INT -- "-${CURRENT_PGID}" >/dev/null 2>&1 || true
+  elif kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+    kill -INT "${CURRENT_PID}" >/dev/null 2>&1 || true
+  fi
+  for attempt in {1..50}; do
+    if ! kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+      wait "${CURRENT_PID}" >/dev/null 2>&1 || true
+      CURRENT_PID=""
+      CURRENT_PGID=""
+      sleep 1
+      return
+    fi
+    sleep 0.1
+  done
   if kill -0 -- "-${CURRENT_PGID}" >/dev/null 2>&1; then
     kill -TERM -- "-${CURRENT_PGID}" >/dev/null 2>&1 || true
   elif kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
     kill -TERM "${CURRENT_PID}" >/dev/null 2>&1 || true
+  fi
+  for attempt in {1..30}; do
+    if ! kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+      wait "${CURRENT_PID}" >/dev/null 2>&1 || true
+      CURRENT_PID=""
+      CURRENT_PGID=""
+      sleep 1
+      return
+    fi
+    sleep 0.1
+  done
+  if kill -0 -- "-${CURRENT_PGID}" >/dev/null 2>&1; then
+    kill -KILL -- "-${CURRENT_PGID}" >/dev/null 2>&1 || true
+  elif kill -0 "${CURRENT_PID}" >/dev/null 2>&1; then
+    kill -KILL "${CURRENT_PID}" >/dev/null 2>&1 || true
   fi
   wait "${CURRENT_PID}" >/dev/null 2>&1 || true
   CURRENT_PID=""
@@ -346,6 +382,24 @@ run_unit_tests() {
   else
     fail "纯 Python 单元测试失败"
   fi
+}
+
+start_node_manager() {
+  local log_file="${LOG_DIR}/smoke_node_manager.log"
+  stop_project
+  echo
+  echo "========================================"
+  echo "  Node manager runtime smoke test"
+  echo "  Log: ${log_file}"
+  echo "========================================"
+  setsid ros2 launch car_bringup node_manager.launch.py "$@" >"${log_file}" 2>&1 &
+  CURRENT_PID=$!
+  sleep 0.2
+  CURRENT_PGID="$(ps -o pgid= -p "${CURRENT_PID}" 2>/dev/null | tr -d ' ' || true)"
+  if [[ -z "${CURRENT_PGID}" ]]; then
+    CURRENT_PGID="${CURRENT_PID}"
+  fi
+  sleep 2
 }
 
 prepare_base_stack() {
@@ -383,7 +437,7 @@ run_package_module() {
   local package
   for package in \
     car_interfaces car_control car_lidar car_vision car_navigation car_map_manager \
-    car_inspection car_mission car_app_bridge car_bringup; do
+    car_inspection car_mission car_app_bridge car_bringup car_runtime_manager; do
     check_package "${package}"
   done
 }
@@ -520,10 +574,115 @@ run_mission_module() {
   if python3 "${ROOT_DIR}/scripts/app_bridge_client.py" \
       --host 127.0.0.1 "${client_auth_args[@]}" \
       --request '{"cmd":"capabilities"}'; then
-    pass "APP v2 capabilities 请求"
+    pass "APP v3 capabilities 请求"
   else
-    fail "APP v2 capabilities 请求失败"
+    fail "APP v3 capabilities 请求失败"
   fi
+}
+
+request_runtime_profile() {
+  local profile=$1
+  local request="{\"cmd\":\"runtime_switch\",\"profile\":\"${profile}\"}"
+  local output
+  local client_auth_args=()
+  if [[ -n "${APP_BRIDGE_TOKEN}" ]]; then
+    client_auth_args=(--token "${APP_BRIDGE_TOKEN}")
+  fi
+  # Test the deployed control path (APP -> Bridge -> Manager), not a
+  # short-lived ros2 CLI client whose graph discovery is flaky on Foxy.
+  if ! output="$(timeout "${RUNTIME_SERVICE_TIMEOUT}" \
+      python3 "${ROOT_DIR}/scripts/app_bridge_client.py" --host 127.0.0.1 \
+      --timeout "${RUNTIME_SERVICE_TIMEOUT}" "${client_auth_args[@]}" \
+      --request "${request}" 2>&1)"; then
+    fail "Runtime profile ${profile} request failed: ${output}"
+    return 1
+  fi
+  if grep -Fq '"accepted": true' <<<"${output}"; then
+    RUNTIME_LAST_GENERATION="$(sed -n 's/^[[:space:]]*"generation": \([0-9][0-9]*\),\{0,1\}$/\1/p' <<<"${output}" | tail -n 1)"
+    if [[ -z "${RUNTIME_LAST_GENERATION}" ]]; then
+      fail "Runtime profile ${profile} response omitted generation: ${output}"
+      return 1
+    fi
+    pass "Runtime profile ${profile} request accepted"
+    return 0
+  fi
+  fail "Runtime profile ${profile} was rejected: ${output}"
+  return 1
+}
+
+wait_runtime_status() {
+  local active_profile=$1
+  local expected_state=$2
+  local log_file=$3
+  local expected_generation=${4:-}
+  local start_time output_file child_pid
+  output_file="${log_file}.runtime_status.log"
+  : >"${output_file}"
+  env PYTHONUNBUFFERED=1 ros2 topic echo /runtime/status \
+    --qos-reliability reliable --qos-durability transient_local >"${output_file}" 2>&1 &
+  child_pid=$!
+  start_time=$(date +%s)
+  while true; do
+    if awk -v profile="${active_profile}" -v state="${expected_state}" \
+        -v generation="${expected_generation}" '
+      $1 == "active_profile:" { active = $2 }
+      $1 == "state:" { current_state = $2 }
+      $1 == "generation:" { current_generation = $2 }
+      $1 == "ready:" {
+        if (active == profile && current_state == state && $2 == "true" \
+            && (generation == "" || current_generation == generation)) {
+          found = 1
+          exit
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' "${output_file}"; then
+      stop_runtime_status_subscriber "${child_pid}"
+      pass "Runtime status ${active_profile}/${expected_state}"
+      return 0
+    fi
+    if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
+      stop_runtime_status_subscriber "${child_pid}"
+      fail "Runtime status subscriber exited unexpectedly (log: ${output_file})"
+      return 1
+    fi
+    if (( $(date +%s) - start_time >= SERVICE_TIMEOUT )); then
+      stop_runtime_status_subscriber "${child_pid}"
+      fail "Runtime status did not reach ${active_profile}/${expected_state} (log: ${output_file})"
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+stop_runtime_status_subscriber() {
+  local child_pid=$1
+  local attempt
+  kill "${child_pid}" >/dev/null 2>&1 || true
+  for attempt in {1..20}; do
+    if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
+      wait "${child_pid}" >/dev/null 2>&1 || true
+      return
+    fi
+    sleep 0.1
+  done
+  kill -KILL "${child_pid}" >/dev/null 2>&1 || true
+  wait "${child_pid}" >/dev/null 2>&1 || true
+}
+
+run_node_manager_module() {
+  start_node_manager \
+    use_keyboard:=false use_camera:=false use_lidar_avoidance:=false \
+    initial_profile:=idle
+  check_node /node_manager "${LOG_DIR}/smoke_node_manager.log"
+  check_node /app_server "${LOG_DIR}/smoke_node_manager.log"
+  check_service /runtime/set_profile
+  request_runtime_profile mapping || return 1
+  wait_runtime_status mapping READY "${LOG_DIR}/smoke_node_manager.log" "${RUNTIME_LAST_GENERATION}"
+  check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_node_manager.log"
+  check_service /map_saver/save_map
+  request_runtime_profile idle || return 1
+  wait_runtime_status idle IDLE "${LOG_DIR}/smoke_node_manager.log" "${RUNTIME_LAST_GENERATION}"
 }
 
 cleanup() {
@@ -566,6 +725,7 @@ main() {
   run_module mapping run_mapping_module
   run_module navigation run_navigation_module
   run_module mission run_mission_module
+  run_module node_manager run_node_manager_module
 
   echo
   if (( FAILURES == 0 )); then

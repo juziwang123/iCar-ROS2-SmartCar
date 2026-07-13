@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>car_runtime_manager</name>
+  <version>0.1.0</version>
+  <description>Safe runtime-profile manager for the iCar ROS2 smart car.</description>
+  <maintainer email="team@example.com">iCar Team</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>car_interfaces</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

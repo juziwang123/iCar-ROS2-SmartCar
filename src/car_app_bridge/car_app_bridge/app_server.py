@@ -19,8 +19,8 @@ from typing import Any, Dict, Optional, Sequence, Set
 
 import rclpy
 from car_interfaces.action import ExecutePatrol
-from car_interfaces.msg import InspectionResult, MissionStatus, PatrolEvent
-from car_interfaces.srv import MissionControl
+from car_interfaces.msg import InspectionResult, MissionStatus, PatrolEvent, RuntimeStatus
+from car_interfaces.srv import MissionControl, SetRuntimeProfile
 from car_map_manager.map_repository import MapNotFoundError, MapRepository, MapRepositoryError
 from car_mission.mission_repository import MissionRepository
 from car_mission.report_exporter import ReportExportError, export_report
@@ -31,6 +31,7 @@ from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import SaveMap
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import Bool, String
 
 from .control_lease import ControlLeaseManager, LeaseError
@@ -105,6 +106,11 @@ class AppServer(Node):
             'pose': None,
             'mission': {'state': 'idle'},
             'inspection': None,
+            'runtime': {
+                'active_profile': 'unknown', 'requested_profile': 'unknown',
+                'state': 'UNKNOWN', 'generation': 0, 'ready': False,
+                'message': 'runtime manager status has not been received',
+            },
         }
 
         self.cmd_pub = self.create_publisher(Twist, self._parameter_topic('manual_topic'), 10)
@@ -129,6 +135,9 @@ class AppServer(Node):
         )
         self.mission_control_client = self.create_client(
             MissionControl, self._parameter_topic('mission_control_service')
+        )
+        self.runtime_client = self.create_client(
+            SetRuntimeProfile, self._parameter_topic('runtime_service')
         )
 
         self.create_subscription(String, self._parameter_topic('mode_topic'), self._on_mode, 10)
@@ -172,6 +181,15 @@ class AppServer(Node):
             self._on_inspection_result,
             10,
         )
+        runtime_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            RuntimeStatus, self._parameter_topic('runtime_status_topic'), self._on_runtime_status,
+            runtime_qos,
+        )
         self.create_timer(0.1, self._expire_control_lease)
 
         self._thread = threading.Thread(target=self._serve, daemon=True)
@@ -208,6 +226,8 @@ class AppServer(Node):
         self.declare_parameter('inspection_result_topic', '/inspection/result')
         self.declare_parameter('mission_action', 'execute_patrol')
         self.declare_parameter('mission_control_service', '/mission/control')
+        self.declare_parameter('runtime_service', '/runtime/set_profile')
+        self.declare_parameter('runtime_status_topic', '/runtime/status')
         self.declare_parameter('maps_root', '~/.icar/maps')
         self.declare_parameter('route_database_path', '~/.icar/icar.db')
         self.declare_parameter('reports_root', '~/.icar/reports')
@@ -366,6 +386,10 @@ class AppServer(Node):
             return self._capabilities() if command == 'capabilities' else {'protocol_version': PROTOCOL_VERSION}
         if command == 'status':
             return self._snapshot()
+        if command == 'runtime_status':
+            return dict(self._state['runtime'])
+        if command == 'runtime_switch':
+            return self._switch_runtime(payload)
         if command == 'subscribe':
             channels = string_list(payload.get('channels', []), 'channels')
             invalid = set(channels) - TELEMETRY_CHANNELS
@@ -797,6 +821,49 @@ class AppServer(Node):
         self._broadcast('status', self._snapshot())
         return {'mode': self._state['mode']}
 
+    def _switch_runtime(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Request a profile transition without exposing arbitrary host paths."""
+        profile = nonempty_string(payload.get('profile'), 'profile').lower()
+        if profile not in {'idle', 'mapping', 'navigation', 'mission'}:
+            raise ProtocolError('profile must be idle, mapping, navigation, or mission')
+        if self._navigation_is_active() or self._mission_is_active():
+            raise ProtocolError('cancel active navigation or mission before switching runtime profile')
+        map_path = ''
+        if profile in {'navigation', 'mission'}:
+            map_id = nonempty_string(payload.get('map_id'), 'map_id')
+            try:
+                manifest = self.map_repository.get_map(map_id)
+            except (MapNotFoundError, MapRepositoryError) as exc:
+                raise ProtocolError(str(exc)) from exc
+            map_path = str((self.map_repository.maps_root / map_id / manifest['yaml_file']).resolve())
+            if not Path(map_path).is_file():
+                raise ProtocolError('managed map YAML no longer exists')
+        elif payload.get('map_id') is not None:
+            raise ProtocolError('map_id is only valid for navigation or mission')
+        use_yolo = boolean(payload.get('use_yolo', False), 'use_yolo')
+        if profile != 'mission' and use_yolo:
+            raise ProtocolError('use_yolo is only valid for the mission profile')
+        if not self.runtime_client.service_is_ready():
+            raise ProtocolError('runtime manager service is unavailable; start node_manager.launch.py')
+        request = SetRuntimeProfile.Request()
+        request.profile = profile
+        request.map_path = map_path
+        # The manager owns its configured mission route file.  APP clients use
+        # mission_start with a stored route ID after the mission profile is ready.
+        request.route_file = ''
+        request.use_yolo = use_yolo
+        result = self._wait_for_future(
+            self.runtime_client.call_async(request), 'runtime profile transition request'
+        )
+        if not result.accepted:
+            raise ProtocolError(result.message)
+        return {
+            'accepted': True,
+            'generation': int(result.generation),
+            'state': result.state,
+            'message': result.message,
+        }
+
     def _on_nav_goal_response(self, future: Any) -> None:
         try:
             goal_handle = future.result()
@@ -977,12 +1044,25 @@ class AppServer(Node):
         self._broadcast('inspection', dict(inspection))
         self._broadcast('status', self._snapshot())
 
+    def _on_runtime_status(self, msg: RuntimeStatus) -> None:
+        self._state['runtime'] = {
+            'active_profile': msg.active_profile,
+            'requested_profile': msg.requested_profile,
+            'state': msg.state,
+            'generation': int(msg.generation),
+            'ready': bool(msg.ready),
+            'message': msg.message,
+        }
+        self._broadcast('runtime', dict(self._state['runtime']))
+        self._broadcast('status', self._snapshot())
+
     # Responses and telemetry ---------------------------------------------
     def _capabilities(self) -> Dict[str, Any]:
         return {
             'protocol_version': PROTOCOL_VERSION,
             'commands': [
                 'ping', 'capabilities', 'status', 'subscribe', 'unsubscribe',
+                'runtime_status', 'runtime_switch',
                 'teleop_acquire', 'teleop_heartbeat', 'teleop_release', 'move',
                 'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'stop_follow',
                 'map_list', 'map_get', 'map_save', 'initial_pose',
@@ -1010,6 +1090,7 @@ class AppServer(Node):
             'pose': dict(self._state['pose']) if self._state['pose'] is not None else None,
             'mission': dict(self._state['mission']),
             'inspection': dict(self._state['inspection']) if self._state['inspection'] is not None else None,
+            'runtime': dict(self._state['runtime']),
             'control_lease': self._control_lease_snapshot(),
         }
 
