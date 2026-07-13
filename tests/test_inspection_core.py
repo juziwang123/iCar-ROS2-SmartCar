@@ -60,6 +60,35 @@ class TestInspectionSchema(unittest.TestCase):
         self.assertEqual(observation.status, 'UNAVAILABLE')
         self.assertEqual(fuse_observations(observation, None).conclusion, 'UNKNOWN')
 
+    def test_registered_model_filters_multi_model_detections(self):
+        observation = local_observation_from_payload(
+            {
+                'model': 'person.pt',
+                'active_models': ['person', 'inspection'],
+                'detections': [
+                    {'model': 'person', 'label': 'fire_extinguisher', 'confidence': 0.99},
+                    {'model': 'inspection', 'label': 'fire_extinguisher', 'confidence': 0.81},
+                ],
+            },
+            target='fire_extinguisher',
+            confidence_threshold=0.70,
+            allow_absent=False,
+            expected_model='inspection',
+        )
+        self.assertEqual(observation.status, 'PRESENT')
+        self.assertEqual(observation.model, 'inspection')
+        self.assertEqual(observation.confidence, 0.81)
+
+    def test_inactive_registered_model_is_unavailable(self):
+        observation = local_observation_from_payload(
+            {'active_models': ['person'], 'detections': []},
+            target='fire_extinguisher',
+            confidence_threshold=0.70,
+            allow_absent=False,
+            expected_model='inspection',
+        )
+        self.assertEqual(observation.status, 'UNAVAILABLE')
+
     def test_vlm_review_is_strict_and_can_resolve_a_local_unknown(self):
         local = local_observation_from_payload(
             {'error': 'model unavailable', 'detections': []},

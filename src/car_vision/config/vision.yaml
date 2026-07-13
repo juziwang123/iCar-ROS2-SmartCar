@@ -26,11 +26,38 @@
     confidence_threshold: 0.45
     # Place a local .pt model under src/car_vision/models/ (not committed),
     # or override this parameter with an absolute model path at launch time.
-    model_path: models/model.pt
+    model_path: models/person.pt
     device: auto
     iou_threshold: 0.45
     image_size: 640
     max_detections: 100
+    # Named YOLO model registry.  Add a name here and its fields below to
+    # register another local model.  ``active_model`` selects one profile;
+    # ``active_models`` may list multiple profiles to run them together.
+    # ``legacy`` remains available for old parameter files that only set
+    # model_path/device.
+    model_registry_names: [person, inspection]
+    active_model: person
+    # Keep a blank entry when disabled; ROS 2 otherwise infers an empty list
+    # as a non-string parameter array.  Replace with [person, inspection] to
+    # run both profiles concurrently.
+    active_models: ['']
+    model_registry.person.model_path: models/person.pt
+    model_registry.person.device: auto
+    model_registry.person.inference_mode: track
+    model_registry.person.confidence_threshold: 0.45
+    model_registry.person.iou_threshold: 0.45
+    model_registry.person.image_size: 640
+    model_registry.person.max_detections: 100
+    # Replace this path with the inspection-specific model before selecting
+    # ``inspection`` through active_model or active_models.
+    model_registry.inspection.model_path: models/inspection.pt
+    model_registry.inspection.device: auto
+    model_registry.inspection.inference_mode: predict
+    model_registry.inspection.confidence_threshold: 0.45
+    model_registry.inspection.iou_threshold: 0.45
+    model_registry.inspection.image_size: 640
+    model_registry.inspection.max_detections: 100
     # <= 0 means process every image. Keep this conservative on Jetson.
     inference_rate_hz: 8.0
     person_labels: [person]

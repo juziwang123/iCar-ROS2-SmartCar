@@ -843,6 +843,15 @@ class AppServer(Node):
         use_yolo = boolean(payload.get('use_yolo', False), 'use_yolo')
         if profile != 'mission' and use_yolo:
             raise ProtocolError('use_yolo is only valid for the mission profile')
+        yolo_active_model = 'person'
+        yolo_active_models = []
+        if use_yolo:
+            yolo_active_model = nonempty_string(
+                payload.get('yolo_active_model', 'person'), 'yolo_active_model'
+            )
+            yolo_active_models = string_list(
+                payload.get('yolo_active_models', []), 'yolo_active_models'
+            )
         if not self.runtime_client.service_is_ready():
             raise ProtocolError('runtime manager service is unavailable; start node_manager.launch.py')
         request = SetRuntimeProfile.Request()
@@ -852,6 +861,8 @@ class AppServer(Node):
         # mission_start with a stored route ID after the mission profile is ready.
         request.route_file = ''
         request.use_yolo = use_yolo
+        request.yolo_active_model = yolo_active_model
+        request.yolo_active_models = yolo_active_models
         result = self._wait_for_future(
             self.runtime_client.call_async(request), 'runtime profile transition request'
         )

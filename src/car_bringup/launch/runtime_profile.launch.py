@@ -79,6 +79,8 @@ def _profile_actions(context, *args, **kwargs):
             'use_yolo': LaunchConfiguration('use_yolo'),
             'yolo_model_path': LaunchConfiguration('vision_yolo_model_path'),
             'yolo_device': LaunchConfiguration('vision_yolo_device'),
+            'yolo_active_model': LaunchConfiguration('vision_yolo_active_model'),
+            'yolo_active_models': LaunchConfiguration('vision_yolo_active_models'),
         }))
     return actions
 
@@ -129,5 +131,7 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument('vision_yolo_model_path', default_value='models/model.pt'),
         DeclareLaunchArgument('vision_yolo_device', default_value='auto'),
+        DeclareLaunchArgument('vision_yolo_active_model', default_value='person'),
+        DeclareLaunchArgument('vision_yolo_active_models', default_value=''),
         OpaqueFunction(function=_profile_actions),
     ])

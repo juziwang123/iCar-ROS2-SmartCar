@@ -49,6 +49,7 @@ def generate_launch_description() -> LaunchDescription:
             ]),
         ),
         DeclareLaunchArgument('initial_use_yolo', default_value='false'),
+        DeclareLaunchArgument('initial_yolo_active_model', default_value='person'),
         DeclareLaunchArgument(
             'control_params_file', default_value=PathJoinSubstitution([
                 FindPackageShare('car_control'), 'config', 'control.yaml',
@@ -108,6 +109,7 @@ def generate_launch_description() -> LaunchDescription:
                 'initial_use_yolo': ParameterValue(
                     LaunchConfiguration('initial_use_yolo'), value_type=bool,
                 ),
+                'initial_yolo_active_model': LaunchConfiguration('initial_yolo_active_model'),
             }],
             output='screen',
         ),

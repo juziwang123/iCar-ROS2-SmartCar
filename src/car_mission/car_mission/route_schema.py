@@ -53,7 +53,7 @@ class CheckinDefinition:
 
 @dataclass(frozen=True)
 class InspectionTask:
-    """A model-agnostic visual task executed after a successful check-in."""
+    """A visual task; ``local_model`` is an optional registered YOLO model name."""
 
     task_id: str
     task_type: str

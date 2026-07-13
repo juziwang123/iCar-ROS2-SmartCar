@@ -30,6 +30,8 @@ checkpoints:
         required: false
         capture_count: 3
         # Must exactly match /vision/detections.model when non-empty.
+        # Optional car_vision model registry name, e.g. inspection.  Empty
+        # accepts detections from any active model.
         local_model: ''
         use_vlm_fallback: false
         confidence_threshold: 0.70
