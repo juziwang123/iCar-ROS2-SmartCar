@@ -31,6 +31,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('SMOKE_MODULES="${SMOKE_MODULES:-all}"', script)
         self.assertIn('SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"', script)
         self.assertIn('HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"', script)
+        self.assertIn('HARDWARE_START_ATTEMPTS="${HARDWARE_START_ATTEMPTS:-2}"', script)
         self.assertIn('GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-5}"', script)
         self.assertIn('SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-30}"', script)
         self.assertIn('LIFECYCLE_TIMEOUT="${LIFECYCLE_TIMEOUT:-30}"', script)
@@ -38,6 +39,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('run_module navigation run_navigation_module', script)
         self.assertIn('prepare_base_stack || return 1', script)
         self.assertIn('prepare_camera || return 1', script)
+        self.assertIn('厂家底盘尚未产生完整传感器数据，重启后重试', script)
 
     def test_real_car_keeps_the_odom_transform_enabled(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')

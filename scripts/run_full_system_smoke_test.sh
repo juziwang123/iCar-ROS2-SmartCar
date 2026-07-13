@@ -29,6 +29,7 @@ TOPIC_TIMEOUT="${TOPIC_TIMEOUT:-8}"
 # sensor sample arrives. Keep their one-time warm-up window separate from the
 # shorter timeout used for project-node data-flow checks.
 HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"
+HARDWARE_START_ATTEMPTS="${HARDWARE_START_ATTEMPTS:-2}"
 GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-5}"
 SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-30}"
 LIFECYCLE_TIMEOUT="${LIFECYCLE_TIMEOUT:-30}"
@@ -186,7 +187,7 @@ check_topic_message() {
     pass "话题 ${topic} 有新鲜数据"
     return 0
   else
-    fail "话题 ${topic} 在 ${TOPIC_TIMEOUT} 内没有数据（日志：${log_file}）"
+    fail "话题 ${topic} 在 ${timeout_sec} 内没有数据（日志：${log_file}）"
     return 1
   fi
 }
@@ -348,13 +349,29 @@ run_unit_tests() {
 }
 
 prepare_base_stack() {
-  local ready=true
-  start_vendor_base_stack
-  check_topic_message /scan "${LOG_DIR}/vendor_bringup.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" \
-    || ready=false
-  check_topic_message /odom "${LOG_DIR}/vendor_bringup.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" \
-    || ready=false
-  [[ "${ready}" == "true" ]]
+  local attempt=1
+  while (( attempt <= HARDWARE_START_ATTEMPTS )); do
+    start_vendor_base_stack
+    if topic_has_message /scan "${LOG_DIR}/vendor_bringup.scan_probe.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" \
+        && topic_has_message /odom "${LOG_DIR}/vendor_bringup.odom_probe.log" volatile "${HARDWARE_TOPIC_TIMEOUT}"; then
+      pass "话题 /scan 有新鲜数据"
+      pass "话题 /odom 有新鲜数据"
+      return 0
+    fi
+
+    if (( attempt < HARDWARE_START_ATTEMPTS )); then
+      echo "[RETRY] 厂家底盘尚未产生完整传感器数据，重启后重试 (${attempt}/${HARDWARE_START_ATTEMPTS})"
+      publish_stop
+      stop_background_nodes
+      PIDS=()
+      PGIDS=()
+    fi
+    attempt=$((attempt + 1))
+  done
+
+  check_topic_message /scan "${LOG_DIR}/vendor_bringup.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" || true
+  check_topic_message /odom "${LOG_DIR}/vendor_bringup.log" volatile "${HARDWARE_TOPIC_TIMEOUT}" || true
+  return 1
 }
 
 prepare_camera() {
