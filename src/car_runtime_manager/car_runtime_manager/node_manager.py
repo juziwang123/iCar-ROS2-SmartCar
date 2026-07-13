@@ -65,9 +65,27 @@ class NodeManager(Node):
         self._service = self.create_service(
             SetRuntimeProfile, self._topic('runtime_service'), self._on_set_profile
         )
-        self.create_subscription(LaserScan, '/scan', lambda _: self._mark_topic('/scan'), 10)
-        self.create_subscription(Odometry, '/odom', lambda _: self._mark_topic('/odom'), 10)
-        self.create_subscription(OccupancyGrid, '/map', lambda _: self._mark_topic('/map'), 10)
+        # Hardware sensor publishers commonly use BEST_EFFORT.  A subscription
+        # created with an integer depth requests RELIABLE QoS and is therefore
+        # incompatible with those publishers, leaving every active profile to
+        # time out waiting for fresh /scan or /odom data.  Requesting
+        # BEST_EFFORT accepts both BEST_EFFORT and RELIABLE publishers.
+        sensor_qos = QoSProfile(
+            depth=10,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        # /map is normally latched by SLAM/Nav2.  Keep the reliable,
+        # transient-local contract so the manager can observe its latest map
+        # even if it starts just after the map publisher.
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(LaserScan, '/scan', lambda _: self._mark_topic('/scan'), sensor_qos)
+        self.create_subscription(Odometry, '/odom', lambda _: self._mark_topic('/odom'), sensor_qos)
+        self.create_subscription(OccupancyGrid, '/map', lambda _: self._mark_topic('/map'), map_qos)
         self._publish_status()
 
         initial_profile = str(self.get_parameter('initial_profile').value).strip().lower()

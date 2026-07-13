@@ -41,6 +41,7 @@ APP_BRIDGE_TOKEN="${APP_BRIDGE_TOKEN:-}"
 FAILURES=0
 CURRENT_PID=""
 CURRENT_PGID=""
+RUNTIME_LAST_GENERATION=""
 
 pass() {
   echo "[PASS] $*"
@@ -597,6 +598,11 @@ request_runtime_profile() {
     return 1
   fi
   if grep -Fq '"accepted": true' <<<"${output}"; then
+    RUNTIME_LAST_GENERATION="$(sed -n 's/^[[:space:]]*"generation": \([0-9][0-9]*\),\{0,1\}$/\1/p' <<<"${output}" | tail -n 1)"
+    if [[ -z "${RUNTIME_LAST_GENERATION}" ]]; then
+      fail "Runtime profile ${profile} response omitted generation: ${output}"
+      return 1
+    fi
     pass "Runtime profile ${profile} request accepted"
     return 0
   fi
@@ -608,6 +614,7 @@ wait_runtime_status() {
   local active_profile=$1
   local expected_state=$2
   local log_file=$3
+  local expected_generation=${4:-}
   local start_time output_file child_pid
   output_file="${log_file}.runtime_status.log"
   : >"${output_file}"
@@ -616,9 +623,20 @@ wait_runtime_status() {
   child_pid=$!
   start_time=$(date +%s)
   while true; do
-    if grep -Fq "active_profile: ${active_profile}" "${output_file}" \
-        && grep -Fq "state: ${expected_state}" "${output_file}" \
-        && grep -Fq 'ready: true' "${output_file}"; then
+    if awk -v profile="${active_profile}" -v state="${expected_state}" \
+        -v generation="${expected_generation}" '
+      $1 == "active_profile:" { active = $2 }
+      $1 == "state:" { current_state = $2 }
+      $1 == "generation:" { current_generation = $2 }
+      $1 == "ready:" {
+        if (active == profile && current_state == state && $2 == "true" \
+            && (generation == "" || current_generation == generation)) {
+          found = 1
+          exit
+        }
+      }
+      END { exit(found ? 0 : 1) }
+    ' "${output_file}"; then
       stop_runtime_status_subscriber "${child_pid}"
       pass "Runtime status ${active_profile}/${expected_state}"
       return 0
@@ -660,11 +678,11 @@ run_node_manager_module() {
   check_node /app_server "${LOG_DIR}/smoke_node_manager.log"
   check_service /runtime/set_profile
   request_runtime_profile mapping || return 1
-  wait_runtime_status mapping READY "${LOG_DIR}/smoke_node_manager.log"
+  wait_runtime_status mapping READY "${LOG_DIR}/smoke_node_manager.log" "${RUNTIME_LAST_GENERATION}"
   check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_node_manager.log"
   check_service /map_saver/save_map
   request_runtime_profile idle || return 1
-  wait_runtime_status idle IDLE "${LOG_DIR}/smoke_node_manager.log"
+  wait_runtime_status idle IDLE "${LOG_DIR}/smoke_node_manager.log" "${RUNTIME_LAST_GENERATION}"
 }
 
 cleanup() {
