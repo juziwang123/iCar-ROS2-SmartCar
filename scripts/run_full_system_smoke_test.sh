@@ -552,7 +552,9 @@ request_runtime_profile() {
     fail "Runtime profile ${profile} request failed: ${output}"
     return 1
   fi
-  if grep -q 'accepted: true' <<<"${output}"; then
+  # Foxy CLI prints service replies as a Python repr (accepted=True), while
+  # newer releases use YAML (accepted: true). Accept both stable forms.
+  if grep -Eq 'accepted[=:][[:space:]]*(true|True)' <<<"${output}"; then
     pass "Runtime profile ${profile} request accepted"
     return 0
   fi
@@ -568,7 +570,7 @@ wait_runtime_status() {
   output_file="${log_file}.runtime_status.log"
   start_time=$(date +%s)
   while true; do
-    if capture_topic_message /runtime/status "${output_file}" transient 4 \
+    if capture_topic_message /runtime/status "${output_file}" transient_local 4 \
         && grep -Fq "active_profile: ${active_profile}" "${output_file}" \
         && grep -Fq "state: ${expected_state}" "${output_file}" \
         && grep -Fq 'ready: true' "${output_file}"; then
