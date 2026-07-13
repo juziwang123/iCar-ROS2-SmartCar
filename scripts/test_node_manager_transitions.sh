@@ -3,8 +3,9 @@
 # Safe on-car integration test for node_manager.  It starts the persistent
 # foundation once, switches mapping on/off through the APP bridge, and checks
 # the exact transition generation reported by /runtime/status.  Supplying
-# MAP_ID also exercises navigation; supplying ROUTE_FILE additionally checks
-# the mission profile through the ROS service (the APP uses stored route IDs).
+# MAP_ID also exercises navigation through the APP.  MAP_PATH exercises the
+# same navigation profile through the ROS service; supplying ROUTE_FILE then
+# additionally checks the mission profile (the APP uses stored route IDs).
 #
 # Run inside the project Docker container after colcon build:
 #   bash scripts/test_node_manager_transitions.sh
@@ -120,9 +121,15 @@ main() {
     generation="$(switch_with_app idle)"
     wait_for_runtime_state idle IDLE "${generation}"
   fi
-  if [[ -n "${MAP_PATH}" || -n "${ROUTE_FILE}" ]]; then
-    [[ -n "${MAP_PATH}" && -n "${ROUTE_FILE}" ]] || {
-      echo 'MAP_PATH and ROUTE_FILE must be provided together for mission testing' >&2
+  if [[ -n "${MAP_PATH}" ]]; then
+    generation="$(switch_with_service navigation "${MAP_PATH}" '')"
+    wait_for_runtime_state navigation READY "${generation}"
+    generation="$(switch_with_app idle)"
+    wait_for_runtime_state idle IDLE "${generation}"
+  fi
+  if [[ -n "${ROUTE_FILE}" ]]; then
+    [[ -n "${MAP_PATH}" ]] || {
+      echo 'MAP_PATH is required when ROUTE_FILE is set for mission testing' >&2
       return 2
     }
     generation="$(switch_with_service mission "${MAP_PATH}" "${ROUTE_FILE}")"
