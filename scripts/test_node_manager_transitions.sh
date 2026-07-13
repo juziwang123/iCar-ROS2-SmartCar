@@ -98,7 +98,7 @@ latest_runtime_generation() {
 
 switch_with_service() {
   local profile=$1 map_path=$2 route_file=$3
-  local output generation previous_generation
+  local output generation previous_generation observed_generation attempt
   previous_generation="$(latest_runtime_generation)"
   [[ "${previous_generation}" =~ ^[0-9]+$ ]] || {
     echo 'runtime status recorder has no generation before service request' >&2
@@ -106,6 +106,17 @@ switch_with_service() {
   }
   if ! output="$(timeout 15 ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
       "{profile: '${profile}', map_path: '${map_path}', route_file: '${route_file}', use_yolo: false}")"; then
+    # Foxy's CLI can lose the response while the server has already accepted
+    # the request.  The manager's generation is the authoritative result.
+    for attempt in {1..10}; do
+      observed_generation="$(latest_runtime_generation)"
+      if [[ "${observed_generation}" =~ ^[0-9]+$ ]] \
+          && (( observed_generation > previous_generation )); then
+        printf '%s\n' "${observed_generation}"
+        return 0
+      fi
+      sleep 0.5
+    done
     echo "runtime service call failed: ${output}" >&2
     return 1
   fi
