@@ -36,7 +36,7 @@ wait_for_runtime_state() {
   local status_file="${LOG_DIR}/runtime_status_${generation}.log"
   local subscriber_pid start_time
   : >"${status_file}"
-  ros2 topic echo /runtime/status --qos-reliability reliable \
+  env PYTHONUNBUFFERED=1 ros2 topic echo /runtime/status --qos-reliability reliable \
     --qos-durability transient_local >"${status_file}" 2>&1 &
   subscriber_pid=$!
   start_time=$(date +%s)
