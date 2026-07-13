@@ -28,7 +28,9 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         DeclareLaunchArgument('use_vendor_base', default_value='true'),
         DeclareLaunchArgument('rplidar_type', default_value='a1'),
-        DeclareLaunchArgument('pub_odom_tf', default_value='false'),
+        # SLAM and Nav2 require the factory odom -> base_footprint transform.
+        # Keep this aligned with the proven real-car smoke-test default.
+        DeclareLaunchArgument('pub_odom_tf', default_value='true'),
         DeclareLaunchArgument('use_robot_description', default_value='true'),
         DeclareLaunchArgument('use_control', default_value='true'),
         DeclareLaunchArgument('use_keyboard', default_value='false'),
