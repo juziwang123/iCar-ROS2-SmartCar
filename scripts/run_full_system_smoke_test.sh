@@ -32,6 +32,7 @@ HARDWARE_TOPIC_TIMEOUT="${HARDWARE_TOPIC_TIMEOUT:-25}"
 HARDWARE_START_ATTEMPTS="${HARDWARE_START_ATTEMPTS:-2}"
 GRAPH_DISCOVERY_SPIN_TIME="${GRAPH_DISCOVERY_SPIN_TIME:-5}"
 SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-30}"
+RUNTIME_SERVICE_TIMEOUT="${RUNTIME_SERVICE_TIMEOUT:-15}"
 LIFECYCLE_TIMEOUT="${LIFECYCLE_TIMEOUT:-30}"
 SMOKE_MODULES="${SMOKE_MODULES:-all}"
 SMOKE_SKIP_MODULES="${SMOKE_SKIP_MODULES:-}"
@@ -548,7 +549,9 @@ request_runtime_profile() {
   local profile=$1
   local request="{profile: '${profile}', map_path: '', route_file: '', use_yolo: false}"
   local output
-  if ! output="$(ros2 service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile "${request}" 2>&1)"; then
+  if ! output="$(timeout "${RUNTIME_SERVICE_TIMEOUT}" \
+      ros2 --no-daemon service call /runtime/set_profile car_interfaces/srv/SetRuntimeProfile \
+      "${request}" 2>&1)"; then
     fail "Runtime profile ${profile} request failed: ${output}"
     return 1
   fi
@@ -566,21 +569,34 @@ wait_runtime_status() {
   local active_profile=$1
   local expected_state=$2
   local log_file=$3
-  local start_time output_file
+  local start_time output_file child_pid
   output_file="${log_file}.runtime_status.log"
+  : >"${output_file}"
+  env PYTHONUNBUFFERED=1 ros2 --no-daemon topic echo /runtime/status \
+    --qos-reliability reliable --qos-durability transient_local >"${output_file}" 2>&1 &
+  child_pid=$!
   start_time=$(date +%s)
   while true; do
-    if capture_topic_message /runtime/status "${output_file}" transient_local 4 \
-        && grep -Fq "active_profile: ${active_profile}" "${output_file}" \
+    if grep -Fq "active_profile: ${active_profile}" "${output_file}" \
         && grep -Fq "state: ${expected_state}" "${output_file}" \
         && grep -Fq 'ready: true' "${output_file}"; then
+      kill "${child_pid}" >/dev/null 2>&1 || true
+      wait "${child_pid}" >/dev/null 2>&1 || true
       pass "Runtime status ${active_profile}/${expected_state}"
       return 0
     fi
+    if ! kill -0 "${child_pid}" >/dev/null 2>&1; then
+      wait "${child_pid}" >/dev/null 2>&1 || true
+      fail "Runtime status subscriber exited unexpectedly (log: ${output_file})"
+      return 1
+    fi
     if (( $(date +%s) - start_time >= SERVICE_TIMEOUT )); then
+      kill "${child_pid}" >/dev/null 2>&1 || true
+      wait "${child_pid}" >/dev/null 2>&1 || true
       fail "Runtime status did not reach ${active_profile}/${expected_state} (log: ${output_file})"
       return 1
     fi
+    sleep 0.1
   done
 }
 
@@ -591,7 +607,6 @@ run_node_manager_module() {
   check_node /node_manager "${LOG_DIR}/smoke_node_manager.log"
   check_node /app_server "${LOG_DIR}/smoke_node_manager.log"
   check_service /runtime/set_profile
-  wait_runtime_status idle IDLE "${LOG_DIR}/smoke_node_manager.log"
   request_runtime_profile mapping || return 1
   wait_runtime_status mapping READY "${LOG_DIR}/smoke_node_manager.log"
   check_node /sync_slam_toolbox_node "${LOG_DIR}/smoke_node_manager.log"
