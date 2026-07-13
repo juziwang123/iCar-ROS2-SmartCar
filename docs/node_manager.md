@@ -1,6 +1,8 @@
 # Node Manager 使用说明
 
-`node_manager` 是实车的常驻运行态管理器。它把底盘、雷达、相机、控制安全链和
+`node_manager` 是实车的常驻运行态管理器，也是 APP 桥接协议 v3 运行态管理功能的权威说明。
+完整的 APP 通信协议（连接、认证、遥控、遥测、地图、路线、任务等）见
+[APP桥接协议.md](APP桥接协议.md)。`node_manager` 把底盘、雷达、相机、控制安全链和
 APP Bridge 保持为基础层，只在 `mapping`、`navigation`、`mission` 三个互斥任务
 配置之间切换。
 

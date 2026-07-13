@@ -6,7 +6,7 @@
 #   bash scripts/start_app_bridge_test.sh
 #   PORT=9000 bash scripts/start_app_bridge_test.sh
 #
-# 在另一个终端启动 v2 协议交互客户端：
+# 在另一个终端启动 v3 协议交互客户端：
 #   python3 scripts/app_bridge_client.py --host 127.0.0.1 --port 8765 --interactive
 
 set -euo pipefail
@@ -57,9 +57,9 @@ main() {
   if python3 "${ROOT_DIR}/scripts/app_bridge_client.py" \
       --host 127.0.0.1 --port "${PORT}" "${client_auth_args[@]}" \
       --request '{"cmd":"capabilities"}'; then
-    echo "APP v2 capabilities 检查通过。"
+    echo "APP v3 capabilities 检查通过。"
   else
-    echo "警告：APP v2 capabilities 检查失败，请查看 ${LOG_DIR}/app_bridge_test.log" >&2
+    echo "警告：APP v3 capabilities 检查失败，请查看 ${LOG_DIR}/app_bridge_test.log" >&2
   fi
 
   echo "APP 桥接服务正在运行。"

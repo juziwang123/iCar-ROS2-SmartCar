@@ -2,7 +2,7 @@
 """Small JSON Lines client for the iCar APP bridge test scripts.
 
 It intentionally sends only requests supplied by the local operator.  It is
-useful for checking APP protocol v2 and managed map saves without exposing an
+useful for checking APP protocol v3 and managed map saves without exposing an
 arbitrary ROS topic publisher.
 """
 

@@ -574,9 +574,9 @@ run_mission_module() {
   if python3 "${ROOT_DIR}/scripts/app_bridge_client.py" \
       --host 127.0.0.1 "${client_auth_args[@]}" \
       --request '{"cmd":"capabilities"}'; then
-    pass "APP v2 capabilities 请求"
+    pass "APP v3 capabilities 请求"
   else
-    fail "APP v2 capabilities 请求失败"
+    fail "APP v3 capabilities 请求失败"
   fi
 }
 
