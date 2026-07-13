@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="app_background">#FFF5F7F8</color>
+    <color name="panel">#FFFFFFFF</color>
+    <color name="panel_stroke">#FFD9E1E5</color>
+    <color name="text_primary">#FF162126</color>
+    <color name="text_secondary">#FF5F6E75</color>
+    <color name="primary">#FF006C68</color>
+    <color name="danger">#FFB3261E</color>
+</resources>
