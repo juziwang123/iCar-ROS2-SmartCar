@@ -16,6 +16,10 @@ def _install_ros_stubs() -> None:
     rclpy.spin = lambda *args, **kwargs: None
     node = types.ModuleType('rclpy.node')
     node.Node = object
+    qos = types.ModuleType('rclpy.qos')
+    qos.DurabilityPolicy = type('DurabilityPolicy', (), {'TRANSIENT_LOCAL': object()})
+    qos.ReliabilityPolicy = type('ReliabilityPolicy', (), {'RELIABLE': object()})
+    qos.QoSProfile = type('QoSProfile', (), {'__init__': lambda self, **kwargs: None})
     geometry_msgs = types.ModuleType('geometry_msgs')
     geometry_msgs_msg = types.ModuleType('geometry_msgs.msg')
     geometry_msgs_msg.Twist = object
@@ -29,6 +33,7 @@ def _install_ros_stubs() -> None:
     sys.modules.update({
         'rclpy': rclpy,
         'rclpy.node': node,
+        'rclpy.qos': qos,
         'geometry_msgs': geometry_msgs,
         'geometry_msgs.msg': geometry_msgs_msg,
         'sensor_msgs': sensor_msgs,
@@ -132,6 +137,23 @@ class TestYoloModelRegistry(unittest.TestCase):
         }
         self.assertTrue(detector._tracking_model_accepts('person'))
         self.assertFalse(detector._tracking_model_accepts('secondary'))
+
+    def test_capabilities_include_labels_from_each_loaded_model(self):
+        detector = object.__new__(YoloDetector)
+        detector.models = {
+            'person': LoadedYoloModel(
+                'person', type('Model', (), {'names': {0: 'person', 1: 'bottle'}})(),
+                Path('person.pt'), 'track', 'auto', 0.4, 0.5, 640, 10,
+            ),
+        }
+        detector.unavailable_reason = None
+        self.assertEqual(detector._capabilities_payload(), {
+            'models': [{
+                'name': 'person', 'file': 'person.pt', 'loaded': True, 'active': True,
+                'inference_mode': 'track', 'labels': ['person', 'bottle'],
+            }],
+            'active_models': ['person'],
+        })
 
 
 if __name__ == '__main__':

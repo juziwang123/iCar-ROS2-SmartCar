@@ -4,6 +4,7 @@
     depth_topic: /camera/depth/image_raw
     target_topic: /vision/color_target
     detection_topic: /vision/detections
+    capabilities_topic: /vision/model_capabilities
     follow_target_topic: /vision/follow_target
     follow_output_topic: /cmd_vel_follow
     person_slow_topic: /vision/person_slow

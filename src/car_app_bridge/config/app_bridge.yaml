@@ -17,6 +17,7 @@
     lidar_warning_topic: /lidar/warning
     lidar_warning_state_topic: /lidar/warning_state
     vision_detection_topic: /vision/detections
+    vision_capabilities_topic: /vision/model_capabilities
     follow_target_topic: /vision/follow_target
     person_slow_topic: /vision/person_slow
     person_estop_topic: /vision/person_estop

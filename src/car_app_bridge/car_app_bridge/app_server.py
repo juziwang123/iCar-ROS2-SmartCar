@@ -99,6 +99,7 @@ class AppServer(Node):
             'lidar_warning_active': False,
             'lidar_warning_state': 'unknown',
             'vision_detection': None,
+            'vision_capabilities': None,
             'follow_target_id': None,
             'person_safety': {'slow_active': False, 'estop_active': False},
             'command': {'linear': 0.0, 'angular': 0.0},
@@ -156,6 +157,17 @@ class AppServer(Node):
         )
         self.create_subscription(
             String, self._parameter_topic('vision_detection_topic'), self._on_vision_detection, 10
+        )
+        vision_capabilities_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            String,
+            self._parameter_topic('vision_capabilities_topic'),
+            self._on_vision_capabilities,
+            vision_capabilities_qos,
         )
         self.create_subscription(
             Bool, self._parameter_topic('person_slow_topic'), self._on_person_slow, 10
@@ -216,6 +228,7 @@ class AppServer(Node):
         self.declare_parameter('lidar_warning_topic', '/lidar/warning')
         self.declare_parameter('lidar_warning_state_topic', '/lidar/warning_state')
         self.declare_parameter('vision_detection_topic', '/vision/detections')
+        self.declare_parameter('vision_capabilities_topic', '/vision/model_capabilities')
         self.declare_parameter('follow_target_topic', '/vision/follow_target')
         self.declare_parameter('person_slow_topic', '/vision/person_slow')
         self.declare_parameter('person_estop_topic', '/vision/person_estop')
@@ -388,6 +401,8 @@ class AppServer(Node):
             return self._snapshot()
         if command == 'runtime_status':
             return dict(self._state['runtime'])
+        if command == 'vision_capabilities':
+            return {'capabilities': self._state['vision_capabilities']}
         if command == 'runtime_switch':
             return self._switch_runtime(payload)
         if command == 'subscribe':
@@ -979,6 +994,15 @@ class AppServer(Node):
         self._state['vision_detection'] = detection
         self._broadcast('vision', {'detection': detection})
 
+    def _on_vision_capabilities(self, msg: String) -> None:
+        try:
+            capabilities: Any = json.loads(msg.data)
+        except json.JSONDecodeError:
+            capabilities = {'error': 'malformed vision capabilities payload'}
+        self._state['vision_capabilities'] = capabilities
+        self._broadcast('vision', {'capabilities': capabilities})
+        self._broadcast('status', self._snapshot())
+
     def _on_person_slow(self, msg: Bool) -> None:
         self._state['person_safety']['slow_active'] = bool(msg.data)
         self._broadcast('status', self._snapshot())
@@ -1073,7 +1097,7 @@ class AppServer(Node):
             'protocol_version': PROTOCOL_VERSION,
             'commands': [
                 'ping', 'capabilities', 'status', 'subscribe', 'unsubscribe',
-                'runtime_status', 'runtime_switch',
+                'runtime_status', 'runtime_switch', 'vision_capabilities',
                 'teleop_acquire', 'teleop_heartbeat', 'teleop_release', 'move',
                 'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'stop_follow',
                 'map_list', 'map_get', 'map_save', 'initial_pose',
@@ -1094,6 +1118,7 @@ class AppServer(Node):
             'effective_estop_active': self._state['effective_estop_active'],
             'lidar': self._lidar_snapshot(),
             'vision_detection': self._state['vision_detection'],
+            'vision_capabilities': self._state['vision_capabilities'],
             'follow_target_id': self._state['follow_target_id'],
             'person_safety': dict(self._state['person_safety']),
             'command': dict(self._state['command']),

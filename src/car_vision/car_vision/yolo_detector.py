@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
@@ -54,6 +55,14 @@ class YoloDetector(Node):
         self.publisher = self.create_publisher(
             String, str(self.get_parameter('detection_topic').value), 10
         )
+        capabilities_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.capabilities_publisher = self.create_publisher(
+            String, str(self.get_parameter('capabilities_topic').value), capabilities_qos
+        )
         self.follow_publisher = self.create_publisher(
             Twist, str(self.get_parameter('follow_output_topic').value), 10
         )
@@ -72,6 +81,7 @@ class YoloDetector(Node):
         self.create_subscription(
             String, str(self.get_parameter('follow_target_topic').value), self._on_follow_target, 10
         )
+        self._publish_capabilities()
         if self.models:
             self.get_logger().info(
                 f"YOLO detector started with: {', '.join(self.models)}"
@@ -83,6 +93,7 @@ class YoloDetector(Node):
         self.declare_parameter('image_topic', '/camera/color/image_raw')
         self.declare_parameter('depth_topic', '/camera/depth/image_raw')
         self.declare_parameter('detection_topic', '/vision/detections')
+        self.declare_parameter('capabilities_topic', '/vision/model_capabilities')
         self.declare_parameter('follow_target_topic', '/vision/follow_target')
         self.declare_parameter('follow_output_topic', '/cmd_vel_follow')
         self.declare_parameter('person_slow_topic', '/vision/person_slow')
@@ -499,6 +510,38 @@ class YoloDetector(Node):
         if error:
             payload['error'] = error
         self.publisher.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+
+    def _publish_capabilities(self) -> None:
+        self.capabilities_publisher.publish(String(data=json.dumps(
+            self._capabilities_payload(), ensure_ascii=False
+        )))
+
+    def _capabilities_payload(self) -> Dict[str, Any]:
+        """Describe loaded models and class labels for APP route construction."""
+        models = []
+        for loaded_model in self.models.values():
+            names = getattr(loaded_model.model, 'names', {})
+            if isinstance(names, dict):
+                labels = [str(names[key]) for key in sorted(names) if isinstance(names[key], str)]
+            elif isinstance(names, (list, tuple)):
+                labels = [str(value) for value in names if isinstance(value, str)]
+            else:
+                labels = []
+            models.append({
+                'name': loaded_model.name,
+                'file': loaded_model.model_file.name,
+                'loaded': True,
+                'active': True,
+                'inference_mode': loaded_model.inference_mode,
+                'labels': labels,
+            })
+        payload: Dict[str, Any] = {
+            'models': models,
+            'active_models': list(self.models),
+        }
+        if self.unavailable_reason:
+            payload['error'] = self.unavailable_reason
+        return payload
 
     @staticmethod
     def _load_bridge():
