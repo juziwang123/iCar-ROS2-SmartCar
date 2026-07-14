@@ -25,10 +25,10 @@ COLCON_IGNORE
 # local runtime logs
 .run_logs/
 
-# Local YOLO weights can be very large and are deployed separately.
-src/car_vision/models/*
-!src/car_vision/models/.gitkeep
 
 # logs
 logs_backup/
 docs/智能小车使用手册.pdf
+docs/2026-实训 - 1. 课程简介.pdf
+docs/未实现的内容.md
+outputs/iCar_ROS2_智能巡检系统_最终答辩.pptx
