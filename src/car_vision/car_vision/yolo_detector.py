@@ -4,24 +4,43 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
 
+@dataclass(frozen=True)
+class LoadedYoloModel:
+    """A local model selected from the node's named registry."""
+
+    name: str
+    model: Any
+    model_file: Path
+    inference_mode: str
+    device: str
+    confidence_threshold: float
+    iou_threshold: float
+    image_size: int
+    max_detections: int
+
+
 class YoloDetector(Node):
-    """Detect and track people with a local model; never download a model at runtime."""
+    """Run one or more named local YOLO models; never download at runtime."""
 
     def __init__(self) -> None:
         super().__init__('yolo_detector')
         self._declare_parameters()
         self.bridge = self._load_bridge()
         self.np = self._load_numpy()
+        self.models: Dict[str, LoadedYoloModel] = {}
+        # Kept as aliases for the existing output contract and integrations.
         self.model = None
         self.model_file: Optional[Path] = None
         self.unavailable_reason: Optional[str] = None
@@ -31,10 +50,18 @@ class YoloDetector(Node):
         self.latest_depth_encoding = ''
         self.selected_track_id: Optional[int] = None
         self.estop_confirmations = 0
-        self._load_model()
+        self._load_models()
 
         self.publisher = self.create_publisher(
             String, str(self.get_parameter('detection_topic').value), 10
+        )
+        capabilities_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.capabilities_publisher = self.create_publisher(
+            String, str(self.get_parameter('capabilities_topic').value), capabilities_qos
         )
         self.follow_publisher = self.create_publisher(
             Twist, str(self.get_parameter('follow_output_topic').value), 10
@@ -54,8 +81,11 @@ class YoloDetector(Node):
         self.create_subscription(
             String, str(self.get_parameter('follow_target_topic').value), self._on_follow_target, 10
         )
-        if self.model is not None:
-            self.get_logger().info(f'YOLO detector started with {self.model_file}')
+        self._publish_capabilities()
+        if self.models:
+            self.get_logger().info(
+                f"YOLO detector started with: {', '.join(self.models)}"
+            )
         else:
             self.get_logger().error(f'YOLO detector is unavailable: {self.unavailable_reason}')
 
@@ -63,10 +93,22 @@ class YoloDetector(Node):
         self.declare_parameter('image_topic', '/camera/color/image_raw')
         self.declare_parameter('depth_topic', '/camera/depth/image_raw')
         self.declare_parameter('detection_topic', '/vision/detections')
+        self.declare_parameter('capabilities_topic', '/vision/model_capabilities')
         self.declare_parameter('follow_target_topic', '/vision/follow_target')
         self.declare_parameter('follow_output_topic', '/cmd_vel_follow')
         self.declare_parameter('person_slow_topic', '/vision/person_slow')
         self.declare_parameter('person_estop_topic', '/vision/person_estop')
+        # ``active_model`` is convenient for launch arguments.  Use
+        # ``active_models`` in a parameter file to run several registered
+        # models for different detection tasks in the same node.
+        self.declare_parameter('active_model', 'legacy')
+        # A blank string keeps these as string-array parameters even before a
+        # parameter file supplies the actual registration/selection list.
+        self.declare_parameter('active_models', [''])
+        # Launch arguments are scalar, so this is the external multi-model
+        # form.  It takes precedence over active_models when supplied.
+        self.declare_parameter('active_models_csv', '')
+        self.declare_parameter('model_registry_names', [''])
         self.declare_parameter('model_path', 'models/model.pt')
         self.declare_parameter('device', 'auto')
         self.declare_parameter('confidence_threshold', 0.45)
@@ -89,27 +131,119 @@ class YoloDetector(Node):
         self.declare_parameter('follow_angular_gain', 0.8)
         self.declare_parameter('follow_max_linear_speed', 0.18)
         self.declare_parameter('follow_max_angular_speed', 0.7)
+        for name in self._registered_model_names():
+            prefix = f'model_registry.{name}'
+            self.declare_parameter(f'{prefix}.model_path', '')
+            self.declare_parameter(f'{prefix}.device', '')
+            self.declare_parameter(f'{prefix}.inference_mode', 'predict')
+            self.declare_parameter(f'{prefix}.confidence_threshold', -1.0)
+            self.declare_parameter(f'{prefix}.iou_threshold', -1.0)
+            self.declare_parameter(f'{prefix}.image_size', 0)
+            self.declare_parameter(f'{prefix}.max_detections', 0)
 
-    def _load_model(self) -> None:
-        configured_path = str(self.get_parameter('model_path').value).strip()
-        if not configured_path:
-            self.unavailable_reason = 'model_path is empty'
-            return
-        model_file = self._resolve_model_path(configured_path)
-        if model_file is None:
-            self.unavailable_reason = f'local model not found: {configured_path}'
-            return
+    def _registered_model_names(self) -> List[str]:
+        names: List[str] = []
+        for value in self.get_parameter('model_registry_names').value:
+            name = str(value).strip()
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    def _active_model_names(self) -> List[str]:
+        csv_names = [
+            value.strip()
+            for value in str(self.get_parameter('active_models_csv').value).split(',')
+            if value.strip()
+        ]
+        names = csv_names or [
+            str(value).strip()
+            for value in self.get_parameter('active_models').value
+            if str(value).strip()
+        ]
+        if not names:
+            name = str(self.get_parameter('active_model').value).strip()
+            names = [name or 'legacy']
+        return list(dict.fromkeys(names))
+
+    def _load_models(self) -> None:
+        requested_names = self._active_model_names()
         try:
             from ultralytics import YOLO
         except ImportError:
             self.unavailable_reason = 'ultralytics is not installed; install requirements-vision.txt'
             return
-        try:
-            self.model = YOLO(str(model_file))
-            self.model_file = model_file
-        except Exception as exc:
-            self.unavailable_reason = f'could not load {model_file}: {exc}'
-            self.model = None
+        registered_names = set(self._registered_model_names())
+        failures: List[str] = []
+        for name in requested_names:
+            if name != 'legacy' and name not in registered_names:
+                failures.append(f'{name}: not present in model_registry_names')
+                continue
+            configured_path = self._model_string_parameter(
+                name, 'model_path', str(self.get_parameter('model_path').value)
+            )
+            if not configured_path:
+                failures.append(f'{name}: model_path is empty')
+                continue
+            model_file = self._resolve_model_path(configured_path)
+            if model_file is None:
+                failures.append(f'{name}: local model not found: {configured_path}')
+                continue
+            inference_mode = self._model_string_parameter(
+                name, 'inference_mode', 'track'
+            ).lower()
+            if inference_mode not in ('predict', 'track'):
+                failures.append(f'{name}: unsupported inference_mode {inference_mode!r}')
+                continue
+            try:
+                model = YOLO(str(model_file))
+            except Exception as exc:
+                failures.append(f'{name}: could not load {model_file}: {exc}')
+                continue
+            loaded = LoadedYoloModel(
+                name=name,
+                model=model,
+                model_file=model_file,
+                inference_mode=inference_mode,
+                device=self._model_string_parameter(
+                    name, 'device', str(self.get_parameter('device').value)
+                ).lower(),
+                confidence_threshold=self._model_float_parameter(
+                    name, 'confidence_threshold', 'confidence_threshold'
+                ),
+                iou_threshold=self._model_float_parameter(
+                    name, 'iou_threshold', 'iou_threshold'
+                ),
+                image_size=self._model_int_parameter(name, 'image_size', 'image_size'),
+                max_detections=self._model_int_parameter(name, 'max_detections', 'max_detections'),
+            )
+            self.models[name] = loaded
+        if self.models:
+            first_model = next(iter(self.models.values()))
+            self.model = first_model.model
+            self.model_file = first_model.model_file
+        if failures:
+            self.unavailable_reason = '; '.join(failures)
+            self.get_logger().warn(f'Unavailable YOLO model registrations: {self.unavailable_reason}')
+        elif not self.models:
+            self.unavailable_reason = 'no active models could be loaded'
+
+    def _model_string_parameter(self, name: str, field: str, fallback: str) -> str:
+        if name == 'legacy':
+            return fallback.strip()
+        value = self.get_parameter(f'model_registry.{name}.{field}').value
+        return str(value).strip() or fallback.strip()
+
+    def _model_float_parameter(self, name: str, field: str, legacy_field: str) -> float:
+        if name == 'legacy':
+            return float(self.get_parameter(legacy_field).value)
+        value = float(self.get_parameter(f'model_registry.{name}.{field}').value)
+        return value if value >= 0.0 else float(self.get_parameter(legacy_field).value)
+
+    def _model_int_parameter(self, name: str, field: str, legacy_field: str) -> int:
+        if name == 'legacy':
+            return int(self.get_parameter(legacy_field).value)
+        value = int(self.get_parameter(f'model_registry.{name}.{field}').value)
+        return value if value > 0 else int(self.get_parameter(legacy_field).value)
 
     @staticmethod
     def _package_root() -> Path:
@@ -163,7 +297,7 @@ class YoloDetector(Node):
     def _on_image(self, msg: Image) -> None:
         if not self._inference_due():
             return
-        if self.model is None or self.bridge is None:
+        if not self.models or self.bridge is None:
             self._clear_safety_and_follow()
             self._publish_detections(
                 [],
@@ -202,40 +336,44 @@ class YoloDetector(Node):
         return True
 
     def _infer(self, frame: Any) -> List[Dict[str, Any]]:
-        device = str(self.get_parameter('device').value).strip().lower()
-        kwargs: Dict[str, Any] = {
-            'verbose': False,
-            'persist': True,
-            'conf': float(self.get_parameter('confidence_threshold').value),
-            'iou': float(self.get_parameter('iou_threshold').value),
-            'imgsz': int(self.get_parameter('image_size').value),
-            'max_det': int(self.get_parameter('max_detections').value),
-        }
-        if device and device != 'auto':
-            kwargs['device'] = device
-        result = self.model.track(frame, **kwargs)[0]
-        names = result.names
         detections: List[Dict[str, Any]] = []
-        for box in result.boxes:
-            class_id = int(box.cls.item())
-            x_min, y_min, x_max, y_max = (float(value) for value in box.xyxy[0].tolist())
-            label = names[class_id] if isinstance(names, dict) else names[class_id]
-            track_id = int(box.id.item()) if box.id is not None else None
-            detections.append({
-                'label': str(label),
-                'class_id': class_id,
-                'track_id': track_id,
-                'confidence': float(box.conf.item()),
-                'x_min': x_min,
-                'y_min': y_min,
-                'x_max': x_max,
-                'y_max': y_max,
-                'center_x': (x_min + x_max) / 2.0,
-                'center_y': (y_min + y_max) / 2.0,
-                'width': x_max - x_min,
-                'height': y_max - y_min,
-                'distance_m': None,
-            })
+        for loaded_model in self.models.values():
+            kwargs: Dict[str, Any] = {
+                'verbose': False,
+                'conf': loaded_model.confidence_threshold,
+                'iou': loaded_model.iou_threshold,
+                'imgsz': loaded_model.image_size,
+                'max_det': loaded_model.max_detections,
+            }
+            if loaded_model.inference_mode == 'track':
+                kwargs['persist'] = True
+            if loaded_model.device and loaded_model.device != 'auto':
+                kwargs['device'] = loaded_model.device
+            runner = loaded_model.model.track if loaded_model.inference_mode == 'track' else loaded_model.model.predict
+            result = runner(frame, **kwargs)[0]
+            names = result.names
+            for box in result.boxes:
+                class_id = int(box.cls.item())
+                x_min, y_min, x_max, y_max = (float(value) for value in box.xyxy[0].tolist())
+                label = names[class_id] if isinstance(names, dict) else names[class_id]
+                box_id = getattr(box, 'id', None)
+                track_id = int(box_id.item()) if box_id is not None else None
+                detections.append({
+                    'model': loaded_model.name,
+                    'label': str(label),
+                    'class_id': class_id,
+                    'track_id': track_id,
+                    'confidence': float(box.conf.item()),
+                    'x_min': x_min,
+                    'y_min': y_min,
+                    'x_max': x_max,
+                    'y_max': y_max,
+                    'center_x': (x_min + x_max) / 2.0,
+                    'center_y': (y_min + y_max) / 2.0,
+                    'width': x_max - x_min,
+                    'height': y_max - y_min,
+                    'distance_m': None,
+                })
         return detections
 
     def _attach_depth_distances(self, detections: List[Dict[str, Any]], width: int, height: int) -> None:
@@ -291,7 +429,12 @@ class YoloDetector(Node):
     def _publish_follow_command(self, detections: List[Dict[str, Any]], image_width: int) -> None:
         command = Twist()
         target = next(
-            (item for item in detections if item['track_id'] == self.selected_track_id and self._is_person(item)),
+            (
+                item for item in detections
+                if item['track_id'] == self.selected_track_id
+                and self._is_person(item)
+                and self._tracking_model_accepts(item['model'])
+            ),
             None,
         )
         if target is None or target['distance_m'] is None:
@@ -323,6 +466,17 @@ class YoloDetector(Node):
             str(label).strip().lower() for label in self.get_parameter('person_labels').value
         }
 
+    def _tracking_model_accepts(self, model_name: str) -> bool:
+        """Avoid ambiguous track IDs if several models are enabled together."""
+        tracking_model = next(
+            (
+                item.name for item in self.models.values()
+                if item.inference_mode == 'track'
+            ),
+            None,
+        )
+        return tracking_model is None or model_name == tracking_model
+
     @staticmethod
     def _clamp(value: float, limit: float) -> float:
         return max(-limit, min(limit, value))
@@ -341,6 +495,8 @@ class YoloDetector(Node):
             'detected': bool(detections),
             'detections': detections,
             'model': self.model_file.name if self.model_file else None,
+            'models': [item.model_file.name for item in self.models.values()],
+            'active_models': list(self.models),
             'selected_track_id': self.selected_track_id,
         }
         if image_width is not None and image_height is not None:
@@ -354,6 +510,38 @@ class YoloDetector(Node):
         if error:
             payload['error'] = error
         self.publisher.publish(String(data=json.dumps(payload, ensure_ascii=False)))
+
+    def _publish_capabilities(self) -> None:
+        self.capabilities_publisher.publish(String(data=json.dumps(
+            self._capabilities_payload(), ensure_ascii=False
+        )))
+
+    def _capabilities_payload(self) -> Dict[str, Any]:
+        """Describe loaded models and class labels for APP route construction."""
+        models = []
+        for loaded_model in self.models.values():
+            names = getattr(loaded_model.model, 'names', {})
+            if isinstance(names, dict):
+                labels = [str(names[key]) for key in sorted(names) if isinstance(names[key], str)]
+            elif isinstance(names, (list, tuple)):
+                labels = [str(value) for value in names if isinstance(value, str)]
+            else:
+                labels = []
+            models.append({
+                'name': loaded_model.name,
+                'file': loaded_model.model_file.name,
+                'loaded': True,
+                'active': True,
+                'inference_mode': loaded_model.inference_mode,
+                'labels': labels,
+            })
+        payload: Dict[str, Any] = {
+            'models': models,
+            'active_models': list(self.models),
+        }
+        if self.unavailable_reason:
+            payload['error'] = self.unavailable_reason
+        return payload
 
     @staticmethod
     def _load_bridge():

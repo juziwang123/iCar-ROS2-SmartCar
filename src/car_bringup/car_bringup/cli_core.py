@@ -23,7 +23,8 @@ VALID_MODES = frozenset({'manual', 'nav', 'vision', 'follow'})
 
 def build_launch_profile(
     name: str, *, map_file: str = '', route_file: str = '', use_app_bridge: bool = False,
-    use_yolo: bool = False, use_rviz: bool = False,
+    use_yolo: bool = False, yolo_active_model: str = 'person', yolo_active_models: str = '',
+    use_rviz: bool = False,
 ) -> LaunchProfile:
     """Build only whitelisted launch arguments; never construct a shell string."""
     normalized = name.strip().lower()
@@ -46,6 +47,16 @@ def build_launch_profile(
         arguments['mission_route_file'] = route_file
     arguments['use_app_bridge'] = 'true' if use_app_bridge else 'false'
     arguments['use_yolo'] = 'true' if use_yolo else 'false'
+    if use_yolo:
+        model = yolo_active_model.strip()
+        if not model or not all(character.isalnum() or character in '_-' for character in model):
+            raise CliError('--yolo-active-model accepts only letters, digits, underscores, and hyphens')
+        arguments['vision_yolo_active_model'] = model
+        models = [value.strip() for value in yolo_active_models.split(',') if value.strip()]
+        if models:
+            if any(not all(character.isalnum() or character in '_-' for character in value) for value in models):
+                raise CliError('--yolo-active-models accepts comma-separated registered model names')
+            arguments['vision_yolo_active_models'] = ','.join(dict.fromkeys(models))
     arguments['navigation_use_rviz'] = 'true' if use_rviz else 'false'
     return LaunchProfile(normalized, arguments)
 

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+import re
+from typing import Dict, Tuple
 
 
 RUNTIME_PROFILES = frozenset({'idle', 'mapping', 'navigation', 'mission'})
@@ -22,6 +23,8 @@ class RuntimeProfileRequest:
     map_path: str = ''
     route_file: str = ''
     use_yolo: bool = False
+    yolo_active_model: str = 'person'
+    yolo_active_models: Tuple[str, ...] = ()
 
     def normalized(self) -> 'RuntimeProfileRequest':
         profile = self.profile.strip().lower()
@@ -31,6 +34,8 @@ class RuntimeProfileRequest:
             )
         if not isinstance(self.use_yolo, bool):
             raise RuntimeProfileError('use_yolo must be a boolean')
+        yolo_active_model = _model_name(self.yolo_active_model)
+        yolo_active_models = tuple(_model_name(value) for value in self.yolo_active_models)
         map_path = _absolute_path(self.map_path, 'map_path') if self.map_path else ''
         route_file = _absolute_path(self.route_file, 'route_file') if self.route_file else ''
         if profile in {'navigation', 'mission'} and not map_path:
@@ -43,7 +48,9 @@ class RuntimeProfileRequest:
             raise RuntimeProfileError('route_file is only valid for the mission profile')
         if profile != 'mission' and self.use_yolo:
             raise RuntimeProfileError('use_yolo is only valid for the mission profile')
-        return RuntimeProfileRequest(profile, map_path, route_file, self.use_yolo)
+        return RuntimeProfileRequest(
+            profile, map_path, route_file, self.use_yolo, yolo_active_model, yolo_active_models
+        )
 
 
 def profile_launch_arguments(request: RuntimeProfileRequest) -> Dict[str, str]:
@@ -55,6 +62,10 @@ def profile_launch_arguments(request: RuntimeProfileRequest) -> Dict[str, str]:
         'profile': request.profile,
         'use_yolo': 'true' if request.use_yolo else 'false',
     }
+    if request.use_yolo:
+        arguments['vision_yolo_active_model'] = request.yolo_active_model
+        if request.yolo_active_models:
+            arguments['vision_yolo_active_models'] = ','.join(request.yolo_active_models)
     if request.map_path:
         arguments['map'] = request.map_path
     if request.route_file:
@@ -80,3 +91,11 @@ def _absolute_path(value: str, field: str) -> str:
     if not path.is_absolute():
         raise RuntimeProfileError(f'{field} must be an absolute path')
     return str(path.resolve())
+
+
+def _model_name(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', value.strip()):
+        raise RuntimeProfileError(
+            'yolo_active_model must contain only letters, digits, underscores, or hyphens'
+        )
+    return value.strip()

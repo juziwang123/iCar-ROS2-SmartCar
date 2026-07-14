@@ -29,8 +29,9 @@ checkpoints:
         # Keep the demo non-blocking until the local model is calibrated.
         required: false
         capture_count: 3
-        # Must exactly match /vision/detections.model when non-empty.
-        local_model: ''
+        # Use the active COCO YOLOv8n person profile for simple object
+        # detection.  This value selects the registered model, not a filename.
+        local_model: person
         use_vlm_fallback: false
         confidence_threshold: 0.70
     failure_policy:

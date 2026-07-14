@@ -16,7 +16,9 @@ def _start(args: argparse.Namespace) -> int:
     try:
         profile = build_launch_profile(
             args.profile, map_file=args.map, route_file=args.route,
-            use_app_bridge=args.app_bridge, use_yolo=args.yolo, use_rviz=args.rviz,
+            use_app_bridge=args.app_bridge, use_yolo=args.yolo,
+            yolo_active_model=args.yolo_active_model,
+            yolo_active_models=args.yolo_active_models, use_rviz=args.rviz,
         )
     except CliError as exc:
         print(f'Error: {exc}', file=sys.stderr)
@@ -337,6 +339,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     start.add_argument('--route', default='', help='mission route YAML path')
     start.add_argument('--app-bridge', action='store_true')
     start.add_argument('--yolo', action='store_true')
+    start.add_argument('--yolo-active-model', default='person')
+    start.add_argument('--yolo-active-models', default='', help='comma-separated registered model names')
     start.add_argument('--rviz', action='store_true')
     start.add_argument('--dry-run', action='store_true')
     start.set_defaults(handler=_start)

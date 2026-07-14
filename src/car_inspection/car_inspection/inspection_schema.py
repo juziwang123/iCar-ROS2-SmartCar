@@ -70,25 +70,44 @@ def local_observation_from_payload(
     allow_absent: bool,
     expected_model: str = '',
 ) -> LocalObservation:
-    """Convert a stamped YOLO payload into a conservative local observation."""
+    """Convert a stamped, possibly multi-model YOLO payload conservatively."""
     if not isinstance(payload, dict):
         return LocalObservation('UNAVAILABLE', 0.0, '', 'detection payload is unavailable')
     model = payload.get('model') if isinstance(payload.get('model'), str) else ''
-    if expected_model and model != expected_model:
-        return LocalObservation(
-            'UNAVAILABLE', 0.0, model,
-            f'expected local model {expected_model!r}, received {model!r}',
-        )
     error = payload.get('error')
     if isinstance(error, str) and error.strip():
         return LocalObservation('UNAVAILABLE', 0.0, model, error.strip())
     detections = payload.get('detections')
     if not isinstance(detections, list):
         return LocalObservation('UNAVAILABLE', 0.0, model, 'detections must be an array')
+    active_models = {
+        value.strip() for value in payload.get('active_models', [])
+        if isinstance(value, str) and value.strip()
+    }
+    has_per_detection_model = any(
+        isinstance(item, dict) and isinstance(item.get('model'), str) and item['model'].strip()
+        for item in detections
+    )
+    if expected_model and active_models and expected_model not in active_models:
+        return LocalObservation(
+            'UNAVAILABLE', 0.0, model,
+            f'expected registered model {expected_model!r} is not active',
+        )
+    if expected_model and not active_models and not has_per_detection_model and model != expected_model:
+        # Compatibility for the former single-model payload, where ``model``
+        # was the model filename rather than a registry name.
+        return LocalObservation(
+            'UNAVAILABLE', 0.0, model,
+            f'expected local model {expected_model!r}, received {model!r}',
+        )
     target_normalized = target.strip().casefold()
     best = 0.0
+    best_model = expected_model or model
     for item in detections:
         if not isinstance(item, dict):
+            continue
+        detection_model = item.get('model') if isinstance(item.get('model'), str) else ''
+        if expected_model and has_per_detection_model and detection_model != expected_model:
             continue
         label = item.get('label')
         confidence = item.get('confidence')
@@ -99,13 +118,15 @@ def local_observation_from_payload(
         except (TypeError, ValueError):
             continue
         if math.isfinite(numeric_confidence):
-            best = max(best, numeric_confidence)
+            if numeric_confidence > best:
+                best = numeric_confidence
+                best_model = detection_model or model
     if best >= confidence_threshold:
-        return LocalObservation('PRESENT', best, model, 'target detected above local threshold')
+        return LocalObservation('PRESENT', best, best_model, 'target detected above local threshold')
     if allow_absent:
-        return LocalObservation('ABSENT', best, model, 'target not detected by validated local model')
+        return LocalObservation('ABSENT', best, best_model, 'target not detected by validated local model')
     return LocalObservation(
-        'NEGATIVE_UNVERIFIED', best, model,
+        'NEGATIVE_UNVERIFIED', best, best_model,
         'local negative detection is not enabled as an absence decision',
     )
 

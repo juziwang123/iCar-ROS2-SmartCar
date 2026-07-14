@@ -4,6 +4,7 @@ string checkpoint_id
 string task_id
 string task_type
 string target
+# Optional car_vision model registry name. Empty accepts any active model.
 string local_model
 uint32 capture_count
 bool use_vlm_fallback

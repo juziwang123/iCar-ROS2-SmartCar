@@ -13,6 +13,19 @@
     still_angular_speed_rps: 0.03
     poll_period_sec: 0.10
     detect_qr: true
+    # Optional local QR-specific YOLO model.  Leave empty to keep the original
+    # full-frame OpenCV QR decoder.  A configured model detects QR regions;
+    # each padded crop is then decoded by OpenCV.
+    qr_yolo_model_path: models/qr-detector.pt
+    qr_yolo_device: auto
+    qr_yolo_confidence_threshold: 0.25
+    qr_yolo_iou_threshold: 0.45
+    qr_yolo_image_size: 640
+    qr_yolo_max_detections: 10
+    # Set these to the class names exported by the deployed QR model.  Use an
+    # empty list only for a single-class model with an arbitrary class name.
+    qr_yolo_labels: [qrcode, qr_code, qr]
+    qr_yolo_crop_padding_ratio: 0.10
     # Requires OpenCV aruco/APRILTAG support; unavailable installations
     # continue serving QR and geofence check-ins safely.
     detect_apriltag: true
