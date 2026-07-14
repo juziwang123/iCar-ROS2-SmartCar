@@ -29,8 +29,10 @@ def generate_launch_description() -> LaunchDescription:
         # The APP bridge calls this lifecycle service to persist a completed
         # SLAM map.  It is intentionally started only in mapping mode.
         DeclareLaunchArgument('use_map_saver', default_value='true'),
-        # Foxy nav2_map_server declares this parameter as an integer.
-        DeclareLaunchArgument('map_save_timeout_sec', default_value='10'),
+        # Foxy nav2_map_server declares this integer in milliseconds, unlike
+        # newer Nav2 releases that accept seconds as a floating-point value.
+        # Ten milliseconds expires before slam_toolbox can republish /map.
+        DeclareLaunchArgument('map_save_timeout_sec', default_value='8000'),
         DeclareLaunchArgument('max_laser_range', default_value='12.0'),
         SetEnvironmentVariable('QT_AUTO_SCREEN_SCALE_FACTOR', '0'),
         SetEnvironmentVariable('QT_SCALE_FACTOR', '0.8'),

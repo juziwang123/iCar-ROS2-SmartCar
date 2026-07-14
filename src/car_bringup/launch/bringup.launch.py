@@ -115,7 +115,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('mapping_publish_laser_tf', default_value='false'),
         DeclareLaunchArgument('mapping_publish_base_link_tf', default_value='false'),
         DeclareLaunchArgument('mapping_use_map_saver', default_value='true'),
-        DeclareLaunchArgument('mapping_map_save_timeout_sec', default_value='10'),
+        DeclareLaunchArgument('mapping_map_save_timeout_sec', default_value='8000'),
         DeclareLaunchArgument('mapping_max_laser_range', default_value='12.0'),
         DeclareLaunchArgument('use_navigation', default_value='false'),
         DeclareLaunchArgument('navigation_use_rviz', default_value='false'),
