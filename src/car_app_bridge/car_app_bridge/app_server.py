@@ -27,6 +27,7 @@ from car_mission.report_exporter import ReportExportError, export_report
 from car_mission.route_repository import RouteNotFoundError, RouteRepository
 from car_mission.route_schema import RouteValidationError, parse_route, route_to_mapping
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
+from nav_msgs.msg import OccupancyGrid
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import SaveMap
 from rclpy.action import ActionClient
@@ -89,6 +90,9 @@ class AppServer(Node):
         self._server: Optional[socket.socket] = None
         self._sessions: Set[ClientSession] = set()
         self._sessions_lock = threading.Lock()
+        self._map_lock = threading.Lock()
+        self._map_received_at = 0.0
+        self._map_received_generation = 0
         self._app_goal_handle = None
         self._mission_goal_handle = None
         self._state: Dict[str, Any] = {
@@ -201,6 +205,17 @@ class AppServer(Node):
         self.create_subscription(
             RuntimeStatus, self._parameter_topic('runtime_status_topic'), self._on_runtime_status,
             runtime_qos,
+        )
+        # Map saver only reports a generic false result when no OccupancyGrid
+        # arrives.  Retain the latest map from the active mapping generation
+        # so APP clients receive an actionable error before attempting a save.
+        map_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.create_subscription(
+            OccupancyGrid, self._parameter_topic('map_topic'), self._on_map, map_qos
         )
         self.create_timer(0.1, self._expire_control_lease)
 
@@ -627,6 +642,19 @@ class AppServer(Node):
         name = nonempty_string(payload.get('name'), 'name')
         if len(name) > 80:
             raise ProtocolError('name must be at most 80 characters')
+        runtime = dict(self._state['runtime'])
+        if runtime['active_profile'] != 'mapping' or not runtime['ready']:
+            raise ProtocolError('mapping is not ready; wait for the mapping runtime to report READY')
+        with self._map_lock:
+            has_current_map = (
+                self._map_received_at > 0.0
+                and self._map_received_generation == int(runtime['generation'])
+            )
+        if not has_current_map:
+            raise ProtocolError(
+                'no map has been received for the current mapping session; '
+                'check /scan, /odom, and the odom-to-laser TF chain'
+            )
         if not self.map_saver_client.service_is_ready():
             raise ProtocolError('map saver service is unavailable; start mapping mode with map_saver enabled')
         map_id = self.map_repository.create_map_id(name)
@@ -1080,6 +1108,10 @@ class AppServer(Node):
         self._broadcast('status', self._snapshot())
 
     def _on_runtime_status(self, msg: RuntimeStatus) -> None:
+        if msg.requested_profile == 'mapping' and msg.state == 'STARTING':
+            with self._map_lock:
+                self._map_received_at = 0.0
+                self._map_received_generation = 0
         self._state['runtime'] = {
             'active_profile': msg.active_profile,
             'requested_profile': msg.requested_profile,
@@ -1090,6 +1122,11 @@ class AppServer(Node):
         }
         self._broadcast('runtime', dict(self._state['runtime']))
         self._broadcast('status', self._snapshot())
+
+    def _on_map(self, _msg: OccupancyGrid) -> None:
+        with self._map_lock:
+            self._map_received_at = time.monotonic()
+            self._map_received_generation = int(self._state['runtime']['generation'])
 
     # Responses and telemetry ---------------------------------------------
     def _capabilities(self) -> Dict[str, Any]:

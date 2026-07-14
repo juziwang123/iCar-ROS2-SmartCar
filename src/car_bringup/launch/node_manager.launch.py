@@ -28,9 +28,11 @@ def generate_launch_description() -> LaunchDescription:
     return LaunchDescription([
         DeclareLaunchArgument('use_vendor_base', default_value='true'),
         DeclareLaunchArgument('rplidar_type', default_value='a1'),
-        # SLAM and Nav2 require the factory odom -> base_footprint transform.
-        # Keep this aligned with the proven real-car smoke-test default.
-        DeclareLaunchArgument('pub_odom_tf', default_value='true'),
+        # The factory EKF is started by vendor_x3_base_no_joy.launch.py and
+        # owns odom -> base_footprint.  Publishing the same transform from
+        # base_node_X3 creates two TF authorities and makes scan transforms
+        # intermittent, so preserve the factory launch default.
+        DeclareLaunchArgument('pub_odom_tf', default_value='false'),
         DeclareLaunchArgument('use_robot_description', default_value='true'),
         DeclareLaunchArgument('use_control', default_value='true'),
         DeclareLaunchArgument('use_keyboard', default_value='false'),

@@ -42,9 +42,13 @@ class TestFoxyCompatibility(unittest.TestCase):
         self.assertIn('厂家底盘尚未产生完整传感器数据，重启后重试', script)
         self.assertIn('registration is the stable, end-to-end readiness contract', script)
 
-    def test_real_car_keeps_the_odom_transform_enabled(self):
+    def test_real_car_lets_ekf_be_the_only_odom_transform_publisher(self):
         common = (ROOT / 'scripts/common_real_car.sh').read_text(encoding='utf-8')
-        self.assertIn('VENDOR_PUB_ODOM_TF:-true', common)
+        node_manager = (ROOT / 'src/car_bringup/launch/node_manager.launch.py').read_text(
+            encoding='utf-8'
+        )
+        self.assertIn('VENDOR_PUB_ODOM_TF:-false', common)
+        self.assertIn("DeclareLaunchArgument('pub_odom_tf', default_value='false')", node_manager)
         self.assertIn('ICAR_VENDOR_LIBRARY_SETUP', common)
         self.assertIn('ICAR_VENDOR_WORKSPACE_SETUP', common)
         self.assertIn('enable_color:=false', common)
