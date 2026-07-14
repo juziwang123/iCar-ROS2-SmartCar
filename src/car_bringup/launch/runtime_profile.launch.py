@@ -1,4 +1,4 @@
-"""Launch only one mutually-exclusive mapping, navigation or mission profile."""
+"""Launch one mutually-exclusive vision, mapping, navigation or mission profile."""
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
@@ -27,8 +27,8 @@ def _include(package: str, launch_file: str, arguments):
 
 def _profile_actions(context, *args, **kwargs):
     profile = LaunchConfiguration('profile').perform(context).strip().lower()
-    if profile not in {'mapping', 'navigation', 'mission'}:
-        raise RuntimeError('profile must be mapping, navigation, or mission')
+    if profile not in {'vision', 'mapping', 'navigation', 'mission'}:
+        raise RuntimeError('profile must be vision, mapping, navigation, or mission')
 
     mapping_arguments = {
         'use_rviz': LaunchConfiguration('mapping_use_rviz'),
@@ -49,25 +49,26 @@ def _profile_actions(context, *args, **kwargs):
         'use_sim_time': LaunchConfiguration('use_sim_time'),
         'send_goal': 'false',
     }
-    if profile == 'mapping':
-        return [_include('car_navigation', 'mapping.launch.py', mapping_arguments)]
+    if profile == 'vision':
+        actions = []
+    elif profile == 'mapping':
+        actions = [_include('car_navigation', 'mapping.launch.py', mapping_arguments)]
+    else:
+        actions = [_include('car_navigation', 'navigation.launch.py', navigation_arguments)]
 
-    actions = [_include('car_navigation', 'navigation.launch.py', navigation_arguments)]
-    if profile != 'mission':
-        return actions
-
-    actions.extend([
-        _include('car_mission', 'mission.launch.py', {
+    if profile == 'mission':
+        actions.extend([
+            _include('car_mission', 'mission.launch.py', {
             'route_file': LaunchConfiguration('mission_route_file'),
             'database_path': LaunchConfiguration('mission_database_path'),
             'require_localization': LaunchConfiguration('mission_require_localization'),
-        }),
-        _include('car_inspection', 'inspection.launch.py', {
+            }),
+            _include('car_inspection', 'inspection.launch.py', {
             'params_file': LaunchConfiguration('inspection_params_file'),
             'use_marker_detector': LaunchConfiguration('inspection_use_marker_detector'),
-        }),
-    ])
-    if _boolean(LaunchConfiguration('use_vision').perform(context), 'use_vision'):
+            }),
+        ])
+    if _boolean(LaunchConfiguration('use_yolo').perform(context), 'use_yolo'):
         # camera_bridge belongs to the persistent foundation.  Task-specific
         # detectors are started here so a mapping/navigation profile never
         # owns a duplicate camera process.
@@ -129,7 +130,7 @@ def generate_launch_description() -> LaunchDescription:
                 FindPackageShare('car_vision'), 'config', 'vision.yaml',
             ]),
         ),
-        DeclareLaunchArgument('vision_yolo_model_path', default_value='models/model.pt'),
+        DeclareLaunchArgument('vision_yolo_model_path', default_value='models/person.pt'),
         DeclareLaunchArgument('vision_yolo_device', default_value='auto'),
         DeclareLaunchArgument('vision_yolo_active_model', default_value='person'),
         DeclareLaunchArgument('vision_yolo_active_models', default_value=''),

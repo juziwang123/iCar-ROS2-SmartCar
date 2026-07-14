@@ -1,5 +1,9 @@
 /**:
   ros__parameters:
+    width: 480
+    height: 360
+    stream_fps: 5.0
+    stream_jpeg_quality: 30
     image_topic: /camera/color/image_raw
     depth_topic: /camera/depth/image_raw
     target_topic: /vision/color_target
@@ -30,7 +34,9 @@
     model_path: models/person.pt
     device: auto
     iou_threshold: 0.45
-    image_size: 640
+    # CPU fallback on the current container: 320 keeps person detection
+    # responsive when NVIDIA container runtime is unavailable.
+    image_size: 320
     max_detections: 100
     # Named YOLO model registry.  Add a name here and its fields below to
     # register another local model.  ``active_model`` selects one profile;
@@ -45,10 +51,14 @@
     active_models: ['']
     model_registry.person.model_path: models/person.pt
     model_registry.person.device: auto
-    model_registry.person.inference_mode: track
+    # ``track`` requires the optional lap/lapx binary dependency, which is
+    # unavailable in the Jetson container.  Predict mode keeps detection
+    # self-contained; yolo_detector supplies a stable single-person id for
+    # APP selection/following.
+    model_registry.person.inference_mode: predict
     model_registry.person.confidence_threshold: 0.45
     model_registry.person.iou_threshold: 0.45
-    model_registry.person.image_size: 640
+    model_registry.person.image_size: 320
     model_registry.person.max_detections: 100
     # Replace this path with the inspection-specific model before selecting
     # ``inspection`` through active_model or active_models.
@@ -57,10 +67,13 @@
     model_registry.inspection.inference_mode: predict
     model_registry.inspection.confidence_threshold: 0.45
     model_registry.inspection.iou_threshold: 0.45
-    model_registry.inspection.image_size: 640
+    # The APP stream is 480x360.  Upscaling every frame to 640 only adds
+    # latency on Jetson and makes following appear frozen; keep both local
+    # models at the same compact inference resolution.
+    model_registry.inspection.image_size: 416
     model_registry.inspection.max_detections: 100
     # <= 0 means process every image. Keep this conservative on Jetson.
-    inference_rate_hz: 8.0
+    inference_rate_hz: 1.0
     person_labels: [person]
     # Depth image must be registered/aligned with the colour image.
     depth_timeout_sec: 0.5
@@ -77,3 +90,11 @@
     follow_angular_gain: 0.8
     follow_max_linear_speed: 0.18
     follow_max_angular_speed: 0.7
+    # Stable APP-selected person following.  A short visual re-acquire window
+    # tolerates a tracker ID change, while forward motion waits until the
+    # person is reasonably centred and never reverses toward them.
+    follow_min_confidence: 0.55
+    follow_alignment_threshold: 0.18
+    follow_filter_alpha: 0.35
+    follow_reacquire_timeout_sec: 0.45
+    follow_reacquire_iou: 0.35

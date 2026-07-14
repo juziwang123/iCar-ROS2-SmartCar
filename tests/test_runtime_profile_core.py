@@ -51,8 +51,11 @@ class TestRuntimeProfileCore(unittest.TestCase):
     def test_idle_rejects_stale_profile_arguments(self):
         with self.assertRaises(RuntimeProfileError):
             RuntimeProfileRequest('idle', '/tmp/map.yaml').normalized()
+        self.assertTrue(RuntimeProfileRequest('vision', use_yolo=True).normalized().use_yolo)
         with self.assertRaises(RuntimeProfileError):
-            RuntimeProfileRequest('mapping', use_yolo=True).normalized()
+            RuntimeProfileRequest('vision', use_yolo=False).normalized()
+        with self.assertRaises(RuntimeProfileError):
+            RuntimeProfileRequest('idle', use_yolo=True).normalized()
         self.assertEqual(profile_launch_arguments(RuntimeProfileRequest('idle')), {})
 
     def test_missing_files_are_rejected_before_starting_ros_launch(self):

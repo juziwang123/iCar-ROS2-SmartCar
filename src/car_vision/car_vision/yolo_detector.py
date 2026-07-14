@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
 
@@ -37,6 +38,9 @@ class YoloDetector(Node):
     def __init__(self) -> None:
         super().__init__('yolo_detector')
         self._declare_parameters()
+        self.person_labels = frozenset(
+            str(value).lower() for value in self.get_parameter('person_labels').value
+        )
         self.bridge = self._load_bridge()
         self.np = self._load_numpy()
         self.models: Dict[str, LoadedYoloModel] = {}
@@ -49,6 +53,14 @@ class YoloDetector(Node):
         self.latest_depth = None
         self.latest_depth_encoding = ''
         self.selected_track_id: Optional[int] = None
+        # The tracker may assign a new ID after a brief occlusion.  Keep a
+        # separate active ID and a short-lived visual anchor so following does
+        # not fail on a single dropped tracking frame.
+        self.follow_track_id: Optional[int] = None
+        self.last_follow_target: Optional[Dict[str, Any]] = None
+        self.last_follow_seen_time = 0.0
+        self.smoothed_follow_distance: Optional[float] = None
+        self.smoothed_follow_error: Optional[float] = None
         self.estop_confirmations = 0
         self._load_models()
 
@@ -73,10 +85,16 @@ class YoloDetector(Node):
             Bool, str(self.get_parameter('person_estop_topic').value), 10
         )
         self.create_subscription(
-            Image, str(self.get_parameter('image_topic').value), self._on_image, 10
+            Image,
+            str(self.get_parameter('image_topic').value),
+            self._on_image,
+            qos_profile_sensor_data,
         )
         self.create_subscription(
-            Image, str(self.get_parameter('depth_topic').value), self._on_depth, 10
+            Image,
+            str(self.get_parameter('depth_topic').value),
+            self._on_depth,
+            qos_profile_sensor_data,
         )
         self.create_subscription(
             String, str(self.get_parameter('follow_target_topic').value), self._on_follow_target, 10
@@ -131,6 +149,18 @@ class YoloDetector(Node):
         self.declare_parameter('follow_angular_gain', 0.8)
         self.declare_parameter('follow_max_linear_speed', 0.18)
         self.declare_parameter('follow_max_angular_speed', 0.7)
+        self.declare_parameter('follow_min_confidence', 0.55)
+        self.declare_parameter('follow_alignment_threshold', 0.18)
+        self.declare_parameter('follow_filter_alpha', 0.35)
+        self.declare_parameter('follow_reacquire_timeout_sec', 0.45)
+        self.declare_parameter('follow_reacquire_iou', 0.35)
+        # Some car camera modules expose colour frames only. In that case use
+        # the selected person's box height as a conservative approximation;
+        # aligned depth remains the preferred distance source.
+        self.declare_parameter('follow_monocular_enabled', True)
+        self.declare_parameter('follow_monocular_person_height_m', 1.65)
+        self.declare_parameter('follow_monocular_focal_length_px', 280.0)
+        self.declare_parameter('follow_monocular_max_distance_m', 3.0)
         for name in self._registered_model_names():
             prefix = f'model_registry.{name}'
             self.declare_parameter(f'{prefix}.model_path', '')
@@ -281,6 +311,7 @@ class YoloDetector(Node):
         value = msg.data.strip()
         if not value:
             self.selected_track_id = None
+            self._reset_follow_state()
             self.follow_publisher.publish(Twist())
             return
         try:
@@ -292,6 +323,8 @@ class YoloDetector(Node):
             self.get_logger().warn(f'Ignoring negative follow target: {track_id}')
             return
         self.selected_track_id = track_id
+        self._reset_follow_state()
+        self.follow_track_id = track_id
         self.get_logger().info(f'APP selected YOLO track {track_id} for following')
 
     def _on_image(self, msg: Image) -> None:
@@ -358,6 +391,12 @@ class YoloDetector(Node):
                 label = names[class_id] if isinstance(names, dict) else names[class_id]
                 box_id = getattr(box, 'id', None)
                 track_id = int(box_id.item()) if box_id is not None else None
+                # The compact Jetson deployment uses predict mode when the
+                # optional lap/lapx tracker is unavailable.  Keep the APP
+                # person-follow workflow usable for the common single-person
+                # case by assigning its stable local selection id.
+                if track_id is None and str(label).lower() in getattr(self, 'person_labels', {'person'}):
+                    track_id = 0
                 detections.append({
                     'model': loaded_model.name,
                     'label': str(label),
@@ -428,35 +467,120 @@ class YoloDetector(Node):
 
     def _publish_follow_command(self, detections: List[Dict[str, Any]], image_width: int) -> None:
         command = Twist()
-        target = next(
-            (
-                item for item in detections
-                if item['track_id'] == self.selected_track_id
-                and self._is_person(item)
-                and self._tracking_model_accepts(item['model'])
-            ),
-            None,
-        )
-        if target is None or target['distance_m'] is None:
+        target = self._follow_target(detections)
+        if target is None:
             self.follow_publisher.publish(command)
             return
+
+        distance = target['distance_m']
+        if distance is None:
+            distance = self._monocular_follow_distance(target)
+        if distance is None:
+            self.follow_publisher.publish(command)
+            return
+
+        self.last_follow_target = dict(target)
+        self.last_follow_seen_time = time.monotonic()
         desired = float(self.get_parameter('follow_desired_distance_m').value)
         tolerance = float(self.get_parameter('follow_distance_tolerance_m').value)
-        distance_error = target['distance_m'] - desired
-        if abs(distance_error) > tolerance:
+        alpha = max(0.05, min(1.0, float(self.get_parameter('follow_filter_alpha').value)))
+        distance = self._smooth_follow_value('smoothed_follow_distance', distance, alpha)
+        horizontal_error = (target['center_x'] - image_width / 2.0) / (image_width / 2.0)
+        horizontal_error = self._smooth_follow_value('smoothed_follow_error', horizontal_error, alpha)
+        distance_error = distance - desired
+
+        # Turn toward the selected person before advancing.  This avoids the
+        # common arc-and-overshoot behaviour when detections jump around the
+        # image.  Following never reverses into a person who is too close.
+        if abs(horizontal_error) <= float(self.get_parameter('follow_alignment_threshold').value) and distance_error > tolerance:
             command.linear.x = self._clamp(
                 distance_error * float(self.get_parameter('follow_linear_gain').value),
                 float(self.get_parameter('follow_max_linear_speed').value),
             )
-        horizontal_error = (target['center_x'] - image_width / 2.0) / (image_width / 2.0)
         command.angular.z = self._clamp(
             -horizontal_error * float(self.get_parameter('follow_angular_gain').value),
             float(self.get_parameter('follow_max_angular_speed').value),
         )
         self.follow_publisher.publish(command)
 
+    def _monocular_follow_distance(self, target: Dict[str, Any]) -> Optional[float]:
+        """Estimate distance from a standing person's pixel height when needed."""
+        if not bool(self.get_parameter('follow_monocular_enabled').value):
+            return None
+        height = float(target.get('height') or 0.0)
+        if height <= 1.0:
+            return None
+        estimated = (
+            float(self.get_parameter('follow_monocular_person_height_m').value)
+            * float(self.get_parameter('follow_monocular_focal_length_px').value)
+            / height
+        )
+        maximum = float(self.get_parameter('follow_monocular_max_distance_m').value)
+        if not math.isfinite(estimated) or estimated <= 0.0 or estimated > maximum:
+            return None
+        return estimated
+
+    def _follow_target(self, detections: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if self.follow_track_id is None:
+            return None
+        candidates = [
+            item for item in detections
+            if self._is_person(item)
+            and self._tracking_model_accepts(item['model'])
+            and item['track_id'] is not None
+            and item['confidence'] >= float(self.get_parameter('follow_min_confidence').value)
+        ]
+        target = next((item for item in candidates if item['track_id'] == self.follow_track_id), None)
+        if target is not None:
+            return target
+
+        # A tracker ID can change after a short occlusion.  Reacquire only a
+        # person that substantially overlaps the last selected box and only
+        # during a short grace period; never switch to an arbitrary person.
+        if self.last_follow_target is None:
+            return None
+        if time.monotonic() - self.last_follow_seen_time > float(self.get_parameter('follow_reacquire_timeout_sec').value):
+            return None
+        threshold = float(self.get_parameter('follow_reacquire_iou').value)
+        target = max(candidates, key=lambda item: self._box_iou(item, self.last_follow_target), default=None)
+        if target is None or self._box_iou(target, self.last_follow_target) < threshold:
+            return None
+        old_id = self.follow_track_id
+        self.follow_track_id = int(target['track_id'])
+        self.selected_track_id = self.follow_track_id
+        self.get_logger().info(f'Reacquired follow target: track {old_id} -> {self.follow_track_id}')
+        return target
+
+    def _reset_follow_state(self) -> None:
+        self.follow_track_id = None
+        self.last_follow_target = None
+        self.last_follow_seen_time = 0.0
+        self.smoothed_follow_distance = None
+        self.smoothed_follow_error = None
+
+    def _smooth_follow_value(self, attribute: str, value: float, alpha: float) -> float:
+        previous = getattr(self, attribute)
+        smoothed = value if previous is None else alpha * value + (1.0 - alpha) * previous
+        setattr(self, attribute, smoothed)
+        return smoothed
+
+    @staticmethod
+    def _box_iou(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+        x_min = max(float(left['x_min']), float(right['x_min']))
+        y_min = max(float(left['y_min']), float(right['y_min']))
+        x_max = min(float(left['x_max']), float(right['x_max']))
+        y_max = min(float(left['y_max']), float(right['y_max']))
+        intersection = max(0.0, x_max - x_min) * max(0.0, y_max - y_min)
+        if intersection <= 0.0:
+            return 0.0
+        left_area = max(0.0, float(left['x_max']) - float(left['x_min'])) * max(0.0, float(left['y_max']) - float(left['y_min']))
+        right_area = max(0.0, float(right['x_max']) - float(right['x_min'])) * max(0.0, float(right['y_max']) - float(right['y_min']))
+        union = left_area + right_area - intersection
+        return intersection / union if union > 0.0 else 0.0
+
     def _clear_safety_and_follow(self) -> None:
         self.estop_confirmations = 0
+        self._reset_follow_state()
         self.person_slow_publisher.publish(Bool(data=False))
         self.person_estop_publisher.publish(Bool(data=False))
         self.follow_publisher.publish(Twist())

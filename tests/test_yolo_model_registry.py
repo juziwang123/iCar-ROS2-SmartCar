@@ -20,6 +20,7 @@ def _install_ros_stubs() -> None:
     qos.DurabilityPolicy = type('DurabilityPolicy', (), {'TRANSIENT_LOCAL': object()})
     qos.ReliabilityPolicy = type('ReliabilityPolicy', (), {'RELIABLE': object()})
     qos.QoSProfile = type('QoSProfile', (), {'__init__': lambda self, **kwargs: None})
+    qos.qos_profile_sensor_data = object()
     geometry_msgs = types.ModuleType('geometry_msgs')
     geometry_msgs_msg = types.ModuleType('geometry_msgs.msg')
     geometry_msgs_msg.Twist = object
@@ -137,6 +138,22 @@ class TestYoloModelRegistry(unittest.TestCase):
         }
         self.assertTrue(detector._tracking_model_accepts('person'))
         self.assertFalse(detector._tracking_model_accepts('secondary'))
+
+    def test_follow_reacquire_overlap_metric(self):
+        self.assertAlmostEqual(
+            YoloDetector._box_iou(
+                {'x_min': 0, 'y_min': 0, 'x_max': 10, 'y_max': 10},
+                {'x_min': 5, 'y_min': 0, 'x_max': 15, 'y_max': 10},
+            ),
+            1.0 / 3.0,
+        )
+        self.assertEqual(
+            YoloDetector._box_iou(
+                {'x_min': 0, 'y_min': 0, 'x_max': 1, 'y_max': 1},
+                {'x_min': 2, 'y_min': 2, 'x_max': 3, 'y_max': 3},
+            ),
+            0.0,
+        )
 
     def test_capabilities_include_labels_from_each_loaded_model(self):
         detector = object.__new__(YoloDetector)

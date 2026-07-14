@@ -38,7 +38,11 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('use_keyboard', default_value='false'),
         DeclareLaunchArgument('use_camera', default_value='true'),
         DeclareLaunchArgument('use_lidar_avoidance', default_value='true'),
-        DeclareLaunchArgument('use_lidar_tracker', default_value='false'),
+        # The vendor's proven lidar following algorithm is safe to keep
+        # running: it only reaches the base when safety_mux is explicitly in
+        # ``follow`` mode.  Starting it here lets the APP enable native
+        # following instantly, without requiring YOLO detections first.
+        DeclareLaunchArgument('use_lidar_tracker', default_value='true'),
         DeclareLaunchArgument('use_lidar_warning', default_value='false'),
         DeclareLaunchArgument('use_app_bridge', default_value='true'),
         DeclareLaunchArgument('app_bridge_host', default_value='0.0.0.0'),
@@ -82,6 +86,13 @@ def generate_launch_description() -> LaunchDescription:
             'pub_odom_tf': LaunchConfiguration('pub_odom_tf'),
             'use_robot_description': LaunchConfiguration('use_robot_description'),
         }, IfCondition(use_vendor_base)),
+        # The factory EKF can be quiet while the vehicle is stationary.  Keep
+        # its latest pose available as dynamic TF so a newly started Nav2
+        # costmap can always initialise its odom -> base_footprint buffer.
+        Node(
+            package='car_bringup', executable='odom_tf_keepalive',
+            name='odom_tf_keepalive', output='screen',
+        ),
         _include('car_control', 'control.launch.py', {
             'use_keyboard': LaunchConfiguration('use_keyboard'),
             'params_file': LaunchConfiguration('control_params_file'),

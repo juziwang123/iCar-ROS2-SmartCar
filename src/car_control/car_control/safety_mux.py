@@ -127,7 +127,14 @@ class SafetyMux(Node):
     def _on_person_estop(self, msg: Bool) -> None:
         was_active = self.person_estop_active
         self.person_estop_active = bool(msg.data)
-        self.person_clear_since = None if self.person_estop_active else time.monotonic()
+        # The perception node publishes ``False`` for every clear camera
+        # frame.  Starting the clear delay for each of those frames keeps the
+        # effective stop latched forever while video/YOLO is running.  Begin
+        # the delay only on the actual active -> clear transition.
+        if self.person_estop_active:
+            self.person_clear_since = None
+        elif was_active:
+            self.person_clear_since = time.monotonic()
         if self.person_estop_active and not was_active:
             self.get_logger().warn('Person safety stop activated')
         elif was_active and not self.person_estop_active:

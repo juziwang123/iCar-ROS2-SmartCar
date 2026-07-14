@@ -64,10 +64,21 @@ def generate_launch_description() -> LaunchDescription:
                         'map': map_file,
                         'use_sim_time': use_sim_time,
                         'params_file': params_file,
-                        'autostart': autostart,
+                        # Nav2 must first create its TF listeners.  The X3
+                        # supplies the initial pose from the persistent
+                        # foundation, then delayed_nav2_autostart activates
+                        # the lifecycle managers below.
+                        'autostart': 'false',
                     }.items(),
                 ),
             ],
+        ),
+        Node(
+            package='car_navigation',
+            executable='delayed_nav2_autostart',
+            name='delayed_nav2_autostart',
+            parameters=[{'delay_sec': 2.5}],
+            output='screen',
         ),
 
         # Optional RViz

@@ -7,7 +7,10 @@
     profile_launch_package: car_bringup
     profile_launch_file: runtime_profile.launch.py
     ros2_command: ros2
-    profile_ready_timeout_sec: 45.0
+    # Navigation waits for the operator to click the car's current position
+    # on the map.  AMCL cannot publish map -> odom before that initial pose,
+    # so allow enough time for the APP's required first step.
+    profile_ready_timeout_sec: 120.0
     profile_shutdown_timeout_sec: 10.0
     readiness_poll_interval_sec: 0.5
     logs_root: ~/.icar/logs/runtime_profiles

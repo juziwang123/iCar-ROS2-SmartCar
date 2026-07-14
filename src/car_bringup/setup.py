@@ -29,6 +29,7 @@ setup(
     entry_points={
         'console_scripts': [
             'icar = car_bringup.icar_cli:main',
+            'odom_tf_keepalive = car_bringup.odom_tf_keepalive:main',
         ],
     },
 )

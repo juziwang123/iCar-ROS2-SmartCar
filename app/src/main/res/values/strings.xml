@@ -25,7 +25,7 @@
     <string name="map_id_hint">地图 ID（留空时使用车端列表第一项）</string>
     <string name="route_id_hint">巡检路线 ID（留空时使用车端列表第一项）</string>
     <string name="navigation">进入导航态</string>
-    <string name="tracking">开始跟随</string>
+    <string name="tracking">开始视觉人物跟随</string>
     <string name="tracking_stop">停止跟随</string>
     <string name="nav_goal_title">导航目标（map 坐标系）</string>
     <string name="nav_x_hint">x</string>

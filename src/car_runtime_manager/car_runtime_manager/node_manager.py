@@ -296,7 +296,12 @@ class NodeManager(Node):
         required_services: Set[str] = set()
         required_actions: Set[str] = set()
         fresh_topics: Set[str] = {'/scan', '/odom'}
-        if profile == 'mapping':
+        if profile == 'vision':
+            # Pure camera inference must remain usable when SLAM cannot
+            # publish a map (for example while the car is stationary).
+            required_nodes.add('yolo_detector')
+            fresh_topics.clear()
+        elif profile == 'mapping':
             required_nodes |= {'sync_slam_toolbox_node', 'map_saver'}
             required_services.add('/map_saver/save_map')
             fresh_topics.add('/map')

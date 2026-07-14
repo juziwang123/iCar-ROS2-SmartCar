@@ -8,8 +8,8 @@ import re
 from typing import Dict, Tuple
 
 
-RUNTIME_PROFILES = frozenset({'idle', 'mapping', 'navigation', 'mission'})
-ACTIVE_PROFILES = frozenset({'mapping', 'navigation', 'mission'})
+RUNTIME_PROFILES = frozenset({'idle', 'vision', 'mapping', 'navigation', 'mission'})
+ACTIVE_PROFILES = frozenset({'vision', 'mapping', 'navigation', 'mission'})
 TRANSITION_STATES = frozenset({'IDLE', 'STARTING', 'READY', 'STOPPING', 'FAILED'})
 
 
@@ -30,7 +30,7 @@ class RuntimeProfileRequest:
         profile = self.profile.strip().lower()
         if profile not in RUNTIME_PROFILES:
             raise RuntimeProfileError(
-                'profile must be one of: idle, mapping, navigation, mission'
+                'profile must be one of: idle, vision, mapping, navigation, mission'
             )
         if not isinstance(self.use_yolo, bool):
             raise RuntimeProfileError('use_yolo must be a boolean')
@@ -46,8 +46,10 @@ class RuntimeProfileRequest:
             raise RuntimeProfileError('mission requires an absolute route_file')
         if profile != 'mission' and route_file:
             raise RuntimeProfileError('route_file is only valid for the mission profile')
-        if profile != 'mission' and self.use_yolo:
-            raise RuntimeProfileError('use_yolo is only valid for the mission profile')
+        if profile == 'idle' and self.use_yolo:
+            raise RuntimeProfileError('use_yolo requires vision, mapping, navigation, or mission profile')
+        if profile == 'vision' and not self.use_yolo:
+            raise RuntimeProfileError('vision profile requires use_yolo=true')
         return RuntimeProfileRequest(
             profile, map_path, route_file, self.use_yolo, yolo_active_model, yolo_active_models
         )

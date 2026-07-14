@@ -13,6 +13,8 @@ import socket
 import threading
 import time
 import uuid
+import base64
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Set
@@ -93,6 +95,9 @@ class AppServer(Node):
         self._map_lock = threading.Lock()
         self._map_received_at = 0.0
         self._map_received_generation = 0
+        self._initial_pose_lock = threading.Lock()
+        self._initial_pose_to_republish: Optional[PoseWithCovarianceStamped] = None
+        self._initial_pose_republish_until = 0.0
         self._app_goal_handle = None
         self._mission_goal_handle = None
         self._state: Dict[str, Any] = {
@@ -102,6 +107,7 @@ class AppServer(Node):
             'lidar_override_active': False,
             'lidar_warning_active': False,
             'lidar_warning_state': 'unknown',
+            'manual_avoidance_active': False,
             'vision_detection': None,
             'vision_capabilities': None,
             'follow_target_id': None,
@@ -109,6 +115,7 @@ class AppServer(Node):
             'command': {'linear': 0.0, 'angular': 0.0},
             'navigation': {'state': 'idle'},
             'pose': None,
+            'map': None,
             'mission': {'state': 'idle'},
             'inspection': None,
             'runtime': {
@@ -129,6 +136,9 @@ class AppServer(Node):
             String, self._parameter_topic('follow_target_topic'), 10
         )
         self.status_pub = self.create_publisher(String, self._parameter_topic('status_topic'), 10)
+        self.manual_avoidance_pub = self.create_publisher(
+            Bool, self._parameter_topic('manual_avoidance_topic'), 10
+        )
         self.nav_client = ActionClient(
             self, NavigateToPose, str(self.get_parameter('navigation_action').value)
         )
@@ -218,6 +228,7 @@ class AppServer(Node):
             OccupancyGrid, self._parameter_topic('map_topic'), self._on_map, map_qos
         )
         self.create_timer(0.1, self._expire_control_lease)
+        self.create_timer(0.25, self._rebroadcast_initial_pose)
 
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
@@ -242,6 +253,7 @@ class AppServer(Node):
         self.declare_parameter('lidar_override_topic', '/lidar/override_active')
         self.declare_parameter('lidar_warning_topic', '/lidar/warning')
         self.declare_parameter('lidar_warning_state_topic', '/lidar/warning_state')
+        self.declare_parameter('manual_avoidance_topic', '/lidar/manual_avoidance_enabled')
         self.declare_parameter('vision_detection_topic', '/vision/detections')
         self.declare_parameter('vision_capabilities_topic', '/vision/model_capabilities')
         self.declare_parameter('follow_target_topic', '/vision/follow_target')
@@ -457,12 +469,20 @@ class AppServer(Node):
             active = boolean(payload.get('active', True), 'active')
             self._set_estop(active)
             return {'active': active}
+        if command == 'manual_avoidance':
+            active = boolean(payload.get('active', True), 'active')
+            self.manual_avoidance_pub.publish(Bool(data=active))
+            self._state['manual_avoidance_active'] = active
+            self._broadcast('status', self._snapshot())
+            return {'active': active}
         if command == 'nav_goal':
             return self._set_navigation_goal(payload)
         if command == 'nav_cancel':
             return self._cancel_navigation_goal()
         if command == 'follow_person':
             return self._follow_person(payload)
+        if command == 'start_lidar_follow':
+            return self._start_lidar_follow()
         if command == 'stop_follow':
             return self._stop_follow()
         if command == 'map_list':
@@ -473,6 +493,8 @@ class AppServer(Node):
                 return {'map': self.map_repository.get_map(map_id)}
             except (MapNotFoundError, MapRepositoryError) as exc:
                 raise ProtocolError(str(exc)) from exc
+        if command == 'map_snapshot':
+            return {'map': self._state['map']}
         if command == 'map_save':
             return self._save_map(payload)
         if command == 'initial_pose':
@@ -694,8 +716,30 @@ class AppServer(Node):
         pose.pose.covariance[0] = 0.25
         pose.pose.covariance[7] = 0.25
         pose.pose.covariance[35] = 0.0685
-        self.initial_pose_pub.publish(pose)
+        # AMCL usually subscribes several seconds after the APP has asked the
+        # runtime manager to start navigation.  /initialpose is volatile, so
+        # a one-shot publish is lost and leaves Nav2 waiting forever for
+        # map->odom.  Keep the exact operator-selected pose available during
+        # startup and publish a small, time-bounded burst until AMCL is up.
+        with self._initial_pose_lock:
+            self._initial_pose_to_republish = pose
+            self._initial_pose_republish_until = time.monotonic() + 12.0
+        self._publish_initial_pose(pose)
         return {'map_id': map_id, 'x': x, 'y': y, 'yaw': yaw, 'frame_id': self.frame_id}
+
+    def _publish_initial_pose(self, pose: PoseWithCovarianceStamped) -> None:
+        pose.header.stamp = self.get_clock().now().to_msg()
+        self.initial_pose_pub.publish(pose)
+
+    def _rebroadcast_initial_pose(self) -> None:
+        with self._initial_pose_lock:
+            if self._initial_pose_to_republish is None:
+                return
+            if time.monotonic() > self._initial_pose_republish_until:
+                self._initial_pose_to_republish = None
+                return
+            pose = self._initial_pose_to_republish
+        self._publish_initial_pose(pose)
 
     def _validate_route(self, definition: Dict[str, Any]) -> Dict[str, Any]:
         try:
@@ -787,6 +831,12 @@ class AppServer(Node):
     def _set_navigation_goal(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._mission_is_active():
             raise ProtocolError('mission is active; use mission control instead of direct navigation')
+        # A visual /goal_pose is not an executable command in this stack.
+        # Do not acknowledge a goal until the Nav2 action server is actually
+        # reachable; otherwise an APP can appear to have started navigation
+        # while the vehicle remains stationary.
+        if not self.nav_client.wait_for_server(timeout_sec=self.service_call_timeout_sec):
+            raise ProtocolError('navigate_to_pose action server is unavailable; wait for navigation READY')
         x = finite_number(payload.get('x'), 'x')
         y = finite_number(payload.get('y'), 'y')
         yaw = finite_number(payload.get('yaw', 0.0), 'yaw')
@@ -806,15 +856,12 @@ class AppServer(Node):
         pose.pose.orientation.w = math.cos(yaw / 2.0)
         self.goal_pub.publish(pose)
         self._state['navigation'] = {'state': 'goal_published', 'x': x, 'y': y, 'yaw': yaw, 'frame_id': frame_id}
-        action_sent = False
-        if self.nav_client.server_is_ready():
-            goal = NavigateToPose.Goal()
-            goal.pose = pose
-            self.nav_client.send_goal_async(goal).add_done_callback(self._on_nav_goal_response)
-            self._state['navigation']['state'] = 'goal_sent'
-            action_sent = True
+        goal = NavigateToPose.Goal()
+        goal.pose = pose
+        self.nav_client.send_goal_async(goal).add_done_callback(self._on_nav_goal_response)
+        self._state['navigation']['state'] = 'goal_sent'
         self._broadcast('navigation', dict(self._state['navigation']))
-        return {**self._state['navigation'], 'action_sent': action_sent}
+        return {**self._state['navigation'], 'action_sent': True}
 
     def _cancel_navigation_goal(self) -> Dict[str, Any]:
         if self._app_goal_handle is None:
@@ -864,11 +911,24 @@ class AppServer(Node):
         self._broadcast('status', self._snapshot())
         return {'mode': self._state['mode']}
 
+    def _start_lidar_follow(self) -> Dict[str, Any]:
+        """Enable the factory-proven lidar distance follower.
+
+        Unlike visual following this needs no camera box or track id.  The
+        tracker publishes only to /cmd_vel_follow and safety_mux retains the
+        final authority for emergency-stop and source selection.
+        """
+        self.follow_target_pub.publish(String(data=''))
+        self._state['follow_target_id'] = None
+        self._set_mode('follow')
+        self._broadcast('status', self._snapshot())
+        return {'mode': self._state['mode'], 'native_lidar_follow': True}
+
     def _switch_runtime(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Request a profile transition without exposing arbitrary host paths."""
         profile = nonempty_string(payload.get('profile'), 'profile').lower()
-        if profile not in {'idle', 'mapping', 'navigation', 'mission'}:
-            raise ProtocolError('profile must be idle, mapping, navigation, or mission')
+        if profile not in {'idle', 'vision', 'mapping', 'navigation', 'mission'}:
+            raise ProtocolError('profile must be idle, vision, mapping, navigation, or mission')
         if self._navigation_is_active() or self._mission_is_active():
             raise ProtocolError('cancel active navigation or mission before switching runtime profile')
         map_path = ''
@@ -884,8 +944,10 @@ class AppServer(Node):
         elif payload.get('map_id') is not None:
             raise ProtocolError('map_id is only valid for navigation or mission')
         use_yolo = boolean(payload.get('use_yolo', False), 'use_yolo')
-        if profile != 'mission' and use_yolo:
-            raise ProtocolError('use_yolo is only valid for the mission profile')
+        if profile == 'idle' and use_yolo:
+            raise ProtocolError('use_yolo requires vision, mapping, navigation, or mission profile')
+        if profile == 'vision' and not use_yolo:
+            raise ProtocolError('vision profile requires use_yolo=true')
         yolo_active_model = 'person'
         yolo_active_models = []
         if use_yolo:
@@ -1127,6 +1189,21 @@ class AppServer(Node):
         with self._map_lock:
             self._map_received_at = time.monotonic()
             self._map_received_generation = int(self._state['runtime']['generation'])
+        # A compact, display-only map snapshot. Values are converted to one byte
+        # per cell (unknown/free/occupied) before DEFLATE+base64 transport.
+        # The APP never receives ROS objects or a writable map interface.
+        info = _msg.info
+        cells = bytearray()
+        for value in _msg.data:
+            cells.append(127 if value < 0 else (255 if value < 50 else 0))
+        self._state['map'] = {
+            'width': int(info.width), 'height': int(info.height),
+            'resolution': float(info.resolution),
+            'origin': {'x': float(info.origin.position.x), 'y': float(info.origin.position.y)},
+            'encoding': 'deflate-u8',
+            'cells': base64.b64encode(zlib.compress(bytes(cells), 6)).decode('ascii'),
+        }
+        self._broadcast('map', dict(self._state['map']))
 
     # Responses and telemetry ---------------------------------------------
     def _capabilities(self) -> Dict[str, Any]:
@@ -1136,8 +1213,10 @@ class AppServer(Node):
                 'ping', 'capabilities', 'status', 'subscribe', 'unsubscribe',
                 'runtime_status', 'runtime_switch', 'vision_capabilities',
                 'teleop_acquire', 'teleop_heartbeat', 'teleop_release', 'move',
-                'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'stop_follow',
+                'mode', 'estop', 'nav_goal', 'nav_cancel', 'follow_person', 'start_lidar_follow', 'stop_follow',
+                'manual_avoidance',
                 'map_list', 'map_get', 'map_save', 'initial_pose',
+                'map_snapshot',
                 'route_list', 'route_get', 'route_validate', 'route_save', 'route_delete',
                 'mission_start', 'mission_pause', 'mission_resume', 'mission_cancel',
                 'mission_checkins', 'mission_inspections', 'mission_report', 'mission_export',
@@ -1154,6 +1233,7 @@ class AppServer(Node):
             'estop_active': self._state['estop_active'],
             'effective_estop_active': self._state['effective_estop_active'],
             'lidar': self._lidar_snapshot(),
+            'manual_avoidance_active': self._state['manual_avoidance_active'],
             'vision_detection': self._state['vision_detection'],
             'vision_capabilities': self._state['vision_capabilities'],
             'follow_target_id': self._state['follow_target_id'],
@@ -1164,6 +1244,7 @@ class AppServer(Node):
             'mission': dict(self._state['mission']),
             'inspection': dict(self._state['inspection']) if self._state['inspection'] is not None else None,
             'runtime': dict(self._state['runtime']),
+            'map': dict(self._state['map']) if self._state['map'] is not None else None,
             'control_lease': self._control_lease_snapshot(),
         }
 

@@ -36,6 +36,7 @@ setup(
     entry_points={
         'console_scripts': [
             'goal_publisher = car_navigation.goal_publisher:main',
+            'delayed_nav2_autostart = car_navigation.delayed_nav2_autostart:main',
             'scan_filter = car_navigation.scan_filter:main',
             'waypoint_patrol = car_navigation.waypoint_patrol:main',
         ],
