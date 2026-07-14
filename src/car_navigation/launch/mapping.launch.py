@@ -89,6 +89,11 @@ def generate_launch_description() -> LaunchDescription:
                 'save_map_timeout': ParameterValue(map_save_timeout_sec, value_type=int),
                 'free_thresh_default': 0.25,
                 'occupied_thresh_default': 0.65,
+                # Foxy creates the map subscription only after SaveMap is
+                # requested.  SLAM Toolbox publishes a latched OccupancyGrid,
+                # so request matching transient-local QoS to receive the
+                # already-built map instead of waiting for a later update.
+                'map_subscribe_transient_local': True,
             }],
             condition=IfCondition(use_map_saver),
             output='screen',

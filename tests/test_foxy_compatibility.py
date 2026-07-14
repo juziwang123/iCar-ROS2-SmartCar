@@ -11,6 +11,7 @@ class TestFoxyCompatibility(unittest.TestCase):
         bringup_launch = (ROOT / 'src/car_bringup/launch/bringup.launch.py').read_text(encoding='utf-8')
         self.assertIn("DeclareLaunchArgument('map_save_timeout_sec', default_value='8000')", mapping_launch)
         self.assertIn("ParameterValue(map_save_timeout_sec, value_type=int)", mapping_launch)
+        self.assertIn("'map_subscribe_transient_local': True", mapping_launch)
         self.assertIn("DeclareLaunchArgument('mapping_map_save_timeout_sec', default_value='8000')", bringup_launch)
 
     def test_bt_plugin_list_excludes_missing_change_goal_library(self):
